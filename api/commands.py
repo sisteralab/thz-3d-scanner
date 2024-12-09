@@ -1,22 +1,12 @@
-import math
-from datetime import datetime
 import numpy as np
 import loader
-from setup.settings import Config
+from store.config import Config
 from pyximc import *
 from ctypes import *
-from setup.settings import State, Feedback
-
-START_TIME = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
-open(f"logs/positions_{START_TIME}.txt", "x")
 
 
 class Commands:
 	def __init__(self):
-		"""
-		Initialize the class
-		"""
-		super().__init__()
 		self.user_unit = None
 		self.steps_per_revolution = 200
 		self.lead_screw_pitch = 2.5
@@ -63,32 +53,29 @@ class Commands:
 		Open a device with OS uri and return identifier of the device which can be used in calls.
 		"""
 		try:
+			xport = f"xi-com:\\\\.\\{Config.AXIS_X_PORT}"
+			yport = f"xi-com:\\\\.\\{Config.AXIS_Y_PORT}"
+			zport = f"xi-com:\\\\.\\{Config.AXIS_Z_PORT}"
+			self.id_x = self.lib.open_device(xport.encode())
+			if self.id_x <= 0:
+				print(f"Error open device X: {xport}")
+				exit(1)
+			else:
+				print("X axis device id: " + repr(self.id_x))
 
-			if Config.COM_OK:
+			self.id_y = self.lib.open_device(yport.encode())
+			if self.id_y <= 0:
+				print(f"Error open device Y: {yport}")
+				exit(1)
+			else:
+				print("Y axis device id: " + repr(self.id_y))
 
-				xport = f"xi-com:\\\\.\\{Config.AXIS_X_PORT}"
-				yport = f"xi-com:\\\\.\\{Config.AXIS_Y_PORT}"
-				zport = f"xi-com:\\\\.\\{Config.AXIS_Z_PORT}"
-				self.id_x = self.lib.open_device(xport.encode())
-				if self.id_x <= 0:
-					print(f"Error open device X: {xport}")
-					exit(1)
-				else:
-					print("X axis device id: " + repr(self.id_x))
-
-				self.id_y = self.lib.open_device(yport.encode())
-				if self.id_y <= 0:
-					print(f"Error open device Y: {yport}")
-					exit(1)
-				else:
-					print("Y axis device id: " + repr(self.id_y))
-
-				self.id_z = self.lib.open_device(zport.encode())
-				if self.id_z <= 0:
-					print(f"Error open device Z: {zport}")
-					exit(1)
-				else:
-					print("Z axis device id: " + repr(self.id_z))
+			self.id_z = self.lib.open_device(zport.encode())
+			if self.id_z <= 0:
+				print(f"Error open device Z: {zport}")
+				exit(1)
+			else:
+				print("Z axis device id: " + repr(self.id_z))
 
 		except:
 			print("COM ports not configured correctly, please check your settings.")
@@ -102,14 +89,9 @@ class Commands:
 		user_unit.A = 0.0125  # linear movement for one step
 		user_unit.MicrostepMode = 9
 
-		if State.UNITS == "mm":
-			user_unit.A = 0.0125
-			self.user_unit = user_unit
-			print(f"Scale factor set to: {user_unit.A} mm/step")
-		elif State.UNITS == "in":
-			user_unit.A = 0.0125 / 25.4
-			self.user_unit = user_unit
-			print(f"Scale factor set to: {user_unit.A} in/step")
+		user_unit.A = 0.0125
+		self.user_unit = user_unit
+		print(f"Scale factor set to: {user_unit.A} mm/step")
 
 	def set_move_settings(self, device_id, speed, asel, decel):
 		"""
@@ -175,25 +157,6 @@ class Commands:
 		if result == Result.Ok:
 			pass
 		return x_pos.Position
-
-	def get_coordinates_feedback(self):
-		if State.MONITORING:
-			timestamp = datetime.now().strftime("%D %H:%M:%S:%f")
-			x = self.get_position(self.id_x)
-			y = self.get_position(self.id_y)
-			z = self.get_position(self.id_z)
-			Feedback.COORDINATES['x'] = x
-			Feedback.COORDINATES['y'] = y
-			Feedback.COORDINATES['z'] = z
-			coords = [
-				float(f"{x:.3f}"),
-				float(f"{y:.3f}"),
-				float(f"{z:.3f}")
-			]
-
-			with open(f'logs/positions_{START_TIME}.txt', 'a') as file:
-				file.write(f"{timestamp}: x: {x:>10_.3f}, y:{y:>10_.3f}, z:{z:>10_.3f}\n")
-			return coords
 
 	def wait_for_stop(self):
 		"""
@@ -521,48 +484,6 @@ class Commands:
 				self.wait_for_stop()
 
 		return np.ndarray.tolist(x_points), np.ndarray.tolist(z_points)
-
-	def calc_speeds(self, linear_speed=Config.MAX_LINEAR_SPEED, accel_rate=Config.ACCELERATION):
-		"""
-		This function sets the axis speeds so linear tool speed stays the same.
-		:param linear_speed: desired linear speed in mm/s. Must be less or equal to 40 mm/s.
-		:return:
-		"""
-		# Initialize the current position
-		current_position = np.array([State.X_TEMP, State.Y_TEMP, State.Z_TEMP])
-
-		new_position = np.array([State.X_CURR, State.Y_CURR, State.Z_CURR])
-
-		# Calculate the direction vector
-		direction_vector = abs(new_position - current_position)
-
-		if not (direction_vector[0] or direction_vector[1] or direction_vector[2]):
-			direction_vector = np.array([1.0, 1.0, 1.0])
-
-		# Normalize the direction vector (to get a unit vector)
-		unit_vector = direction_vector / np.linalg.norm(direction_vector)
-
-		# Calculate the speed for each axis
-		axis_speeds = unit_vector * linear_speed
-
-		# Assume a certain acceleration/deceleration rate (change this value as needed)
-		accel_rate = accel_rate  # in mm/s^2
-
-		# Calculate the acceleration for each axis
-		axis_accel = unit_vector * accel_rate + np.array([10, 10, 10])
-
-		# Deceleration is just negative acceleration
-		axis_decel = axis_accel
-
-		for j in range(1, 4):
-			self.set_move_settings(
-				j, int(math.ceil(axis_speeds[j - 1])),
-				int(math.ceil(axis_accel[j - 1])),
-				int(math.ceil(axis_decel[j - 1]))
-			)
-
-		# Update the current position
-		current_position = new_position
 
 	def disconnect_devices(self):
 		"""

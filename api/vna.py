@@ -1,151 +1,22 @@
 import logging
 import time
-from typing import Dict, Union
-import socket
+from typing import Dict
+from typing_extensions import Literal
 
 import numpy as np
 
+from api.adapters.socket_adapter import SocketAdapter
+from utils.classes import BaseInstrument
 
 logger = logging.getLogger(__name__)
 
 
-class DeviceConnectionError(Exception):
-    ...
+VNA_PARAMETERS = Literal["AB", "BA"]
+VNA_SWEEP_TYPES = Literal["LIN", "LOG", "SEG", "POW", "CW"]
+VNA_CHANNEL_FORMATS = Literal["COMP"]
 
 
-class InstrumentAdapterInterface:
-    """
-    This is the base interface for Instrument adapter
-    """
-
-    def _send(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def _recv(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def read(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def query(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def write(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def connect(self, *args, **kwargs):
-        raise NotImplementedError
-
-    def close(self, *args, **kwargs):
-        raise NotImplementedError
-
-
-class SocketAdapter(InstrumentAdapterInterface):
-    def __init__(
-        self,
-        host: str,
-        port: int,
-        timeout: float = 2,
-        delay: float = 0.4,
-    ):
-        self.socket = None
-        self.host = host
-        self.port = int(port)
-        self.timeout = 0
-        self.delay = delay
-        self.init(timeout)
-
-    def init(self, timeout: float = 2):
-        if self.socket is None:
-            logger.info(f"[{self.__class__.__name__}.init]Socket is None, creating ...")
-            self.socket = socket.socket(
-                socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP
-            )
-        else:
-            logger.info(
-                f"[{self.__class__.__name__}.init]Socket is already existed, connecting ..."
-            )
-        self.connect(timeout)
-
-    def connect(self, timeout: float = 2):
-        self.set_timeout(timeout)
-        try:
-            self.socket.connect((self.host, self.port))
-            logger.info(
-                f"[{self.__class__.__name__}.connect]Socket has been connected {self.socket}."
-            )
-        except (OSError, TimeoutError) as e:
-            logger.error(f"[{self.__class__.__name__}.connect] Error: {e}")
-            raise DeviceConnectionError("Unable to connect socket")
-
-    def is_socket_closed(self) -> Union[bool, None]:
-        try:
-            # this will try to read bytes without blocking and also without removing them from buffer (peek only)
-            data = self.socket.recv(16)
-            if len(data) == 0:
-                logger.info(
-                    f"[{self.__class__.__name__}.is_socket_closed] Socket is closed"
-                )
-                return True
-        except BlockingIOError:
-            logger.info(
-                f"[{self.__class__.__name__}.is_socket_closed] BlockingIOError, socket is opened"
-            )
-            return False  # socket is open and reading from it would block
-        except ConnectionResetError:
-            logger.info(
-                f"[{self.__class__.__name__}.is_socket_closed] ConnectionResetError, socket is closed"
-            )
-            return True  # socket was closed for some other reason
-        except Exception as e:
-            logger.error(
-                f"[{self.__class__.__name__}.is_socket_closed] Unexpected exception '{e}', socket status is undefined"
-            )
-            return None
-        logger.info(f"[{self.__class__.__name__}.is_socket_closed] Socket is opened")
-        return False
-
-    def close(self):
-        if self.socket is None:
-            logger.warning(f"[{self.__class__.__name__}.close] Socket is None")
-            return
-        self.socket.close()
-        logger.info(f"[{self.__class__.__name__}.close] Socket has been closed.")
-
-    def write(self, cmd: str, **kwargs):
-        self._send(cmd)
-
-    def read(self, num_bytes=1024, **kwargs):
-        return self._recv(num_bytes)
-
-    def query(self, cmd: str, buffer_size=1024 * 1024, delay: float = 0, **kwargs):
-        self.write(cmd, **kwargs)
-        if delay:
-            time.sleep(delay)
-        elif self.delay:
-            time.sleep(self.delay)
-        return self.read(num_bytes=buffer_size)
-
-    def set_timeout(self, timeout):
-        if timeout < 1e-3 or timeout > 3:
-            raise ValueError("Timeout must be >= 1e-3 (1ms) and <= 3 (3s)")
-
-        self.timeout = timeout
-        self.socket.settimeout(self.timeout)
-
-    def _send(self, value):
-        encoded_value = ("%s\n" % value).encode("ascii")
-        self.socket.sendall(encoded_value)
-
-    def _recv(self, byte_num):
-        value = self.socket.recv(byte_num)
-        return value.decode("ascii").rstrip()
-
-    def __del__(self):
-        self.close()
-
-
-class VNABlock:
+class VNABlock(BaseInstrument):
     """
     Default host 169.254.106.189
     Default port 5025
@@ -157,12 +28,6 @@ class VNABlock:
         port: int = 5025,
     ):
         self.adapter = SocketAdapter(host=host, port=port)
-
-    def query(self, cmd: str, **kwargs) -> str:
-        return self.adapter.query(cmd, **kwargs)
-
-    def write(self, cmd: str) -> None:
-        return self.adapter.write(cmd)
 
     def idn(self) -> str:
         return self.query("*IDN?")
@@ -176,11 +41,23 @@ class VNABlock:
         result = self.idn()
         return "Rohde&Schwarz,ZVA67-4Port" in result
 
+    def set_sweep_type(self, sweep_type: VNA_SWEEP_TYPES = "CW"):
+        self.write(f"SWE:TYPE {sweep_type}")
+
+    def get_sweep_type(self) -> str:
+        return self.query("SWE:TYPE?")
+
     def set_sweep(self, points: int = 1000) -> None:
         self.write(f"SWE:POIN {points}")
 
     def get_sweep(self) -> int:
         return int(self.query(f"SWE:POIN?", delay=0.05))
+
+    def set_cw_frequency(self, frequency: float):
+        self.write(f"SOUR:FREQ:CW {frequency} Hz")
+
+    def get_cw_frequency(self) -> float:
+        return float(self.query(f"SOUR:FREQ:CW?"))
 
     def set_average_status(self, value: bool, channel: int = 1) -> None:
         status = "ON" if value else "OFF"
@@ -189,7 +66,7 @@ class VNABlock:
     def set_average_count(self, value: int, channel: int = 1) -> None:
         self.write(f"SENSe{channel}:AVERage:COUNt {value}")
 
-    def set_channel_format(self, form: str = "COMP") -> None:
+    def set_channel_format(self, form: VNA_CHANNEL_FORMATS = "COMP") -> None:
         self.write(f"CALC:FORM {form}")
 
     def get_channel_format(self):
@@ -213,10 +90,18 @@ class VNABlock:
     def set_stop_frequency(self, freq: float) -> None:
         self.write(f"SENS:FREQ:STOP {freq}")
 
+    def set_start_time(self, stime: float) -> None:
+        ...
+
+    def set_stop_time(self, stime: float) -> None:
+        ...
+
     def set_parameter(
-        self, parameter: str = "S11", trace: str = "Trc1", channel: int = 1
+        self, parameter: VNA_PARAMETERS = "BA", trace: str = "Trc1", channel: int = 1
     ) -> None:
         self.write(f"CALCulate{channel}:PARameter:DEFine {trace},{parameter}")
+        # self.write("DISP:WIND2:STAT ON")
+        # self.write(f"DISP:WIND2:TRAC1:FEED Trc1")
 
     def get_parameter_catalog(self, channel: int = 1) -> Dict[str, str]:
         """Current catalog of parameters
@@ -232,7 +117,7 @@ class VNABlock:
 
     def get_data(self) -> Dict:
         """
-        Method to get reflection level from VNA
+        Method to get data from VNA
         """
         attempts = 5
         attempt = 0
@@ -248,22 +133,30 @@ class VNABlock:
             if np.sum(np.abs(resp)) > 0:
                 real = resp[::2]
                 imag = resp[1::2]
-                freq = list(
-                    np.linspace(
-                        self.get_start_frequency(),
-                        self.get_stop_frequency(),
-                        self.get_sweep(),
-                    )
-                )
-                s_param = self.get_parameter_catalog()["Trc1"]
+                param = self.get_parameter_catalog()["Trc1"]
                 power = self.get_power()
 
                 return {
-                    "array": np.array([r + i * 1j for r, i in zip(real, imag)]),
                     "real": real,
                     "imag": imag,
-                    "freq": freq,
-                    "parameter": s_param,
+                    "amplitude": 20 * np.log10(np.abs([r + i * 1j for r, i in zip(real, imag)])),
+                    "frequency": self.get_cw_frequency(),
+                    "parameter": param,
                     "power": power,
                 }
         return {}
+
+
+if __name__ == "__main__":
+    vna = VNABlock()
+    # vna.set_parameter("BA")
+    # vna.set_sweep_type("CW")
+    # vna.set_parameter
+    vna.set_parameter("BA")
+    vna.set_sweep_type("CW")
+    vna.set_channel_format("COMP")
+    vna.set_cw_frequency(3.067e9)
+    print(vna.get_parameter_catalog())
+    print(vna.get_channel_format())
+    print(vna.get_cw_frequency())
+    print(vna.get_data())
