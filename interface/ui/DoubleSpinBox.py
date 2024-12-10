@@ -43,7 +43,7 @@ class DoubleSpinBox(QDoubleSpinBox):
         self.lineEdit().setCursorPosition(cursor_position)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        if event.key() == Qt.Key.Key_Return:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if callable(self.btn_return_method):
                 self.btn_return_method()
 

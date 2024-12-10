@@ -4,6 +4,7 @@ from api.vna import VNABlock
 
 class State:
     measure_running = False
+    monitor_running = False
     d3: Commands = None
     vna: VNABlock = None
 

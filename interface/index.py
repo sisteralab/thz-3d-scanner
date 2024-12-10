@@ -2,10 +2,19 @@ import numpy as np
 from PySide6 import QtGui
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout
 import pyqtgraph.opengl as gl
-import pyqtgraph as pg
 
 from interface.manager_widget import ManagerWidget
 from store.state import State
+
+
+def cet_l4(z):
+    '''poor approximation of the `CET-L4` colormap'''
+    z_min, z_range = z.min(), z.ptp()
+    return [
+        1.5/z_range, -z_min, 0.7,  # red channel
+        1.7/z_range, -(z_min+0.4*z_range), 1,  # green channel
+        0, 0, 1,  # blue channel is empty
+    ]
 
 
 class Scanner3D(QMainWindow):
@@ -22,46 +31,38 @@ class Scanner3D(QMainWindow):
         self.layout = QHBoxLayout(self.central_widget)
 
         self.manager_widget = ManagerWidget(self)
+
         self.plot_widget = gl.GLViewWidget()
         self.plot_widget.setBackgroundColor('w')
+        self.plot_item = gl.GLSurfacePlotItem(smooth=False, computeNormals=False, shader='heightColor')
+        self.plot_widget.addItem(self.plot_item)
+
+        # Добавление сетки
+        gy = gl.GLGridItem(color='grey')
+        gy.rotate(90, 1, 0, 0)
+        self.plot_widget.addItem(gy)
 
         self.layout.addWidget(self.plot_widget)
         self.layout.addWidget(self.manager_widget)
 
-        # preparing plot
-
-        self.plot_item = gl.GLSurfacePlotItem(shader='heightColor', computeNormals=False, smooth=False)
-        self.plot_widget.addItem(self.plot_item)
-        self.prepare_plot()
-        # self.color_map = np.array([
-        #     [0, 0, 1, 1],  # Синий
-        #     [1, 0, 0, 1]  # Красный
-        # ])
-        # self.plot_item.shader()['colorMap'] = self.color_map
-
-
-    def prepare_plot(self):
-        # Добавление сетки
-        self.grid = gl.GLGridItem(color='grey')
-        self.plot_widget.addItem(self.grid)
-
-        # Добавление подписей к осям
-        self.x_label = gl.GLTextItem(pos=(10, 0, 0), text='X')
-        self.y_label = gl.GLTextItem(pos=(0, 10, 0), text='Y')
-        self.z_label = gl.GLTextItem(pos=(0, 0, 10), text='Z')
-        self.plot_widget.addItem(self.x_label)
-        self.plot_widget.addItem(self.y_label)
-        self.plot_widget.addItem(self.z_label)
+        self.update_plot({
+            "amplitude": [
+                [-1, 0, 0, -1],
+                [-1, 0, 0, -1],
+                [-1, 0, 0, -1],
+                [-1, 0, 0, -1],
+            ],
+            'x': [-20, -10, 10, 20],
+            'y': [-20, -10, 10, 20],
+            'z': [-20, -10, 10, 20],
+        })
 
     def update_plot(self, data):
-        z = np.array(data['amplitude'])
-        cmap = pg.colormap.get('CET-L4')
-        c = cmap.map((z - z.min()) / z.ptp(), cmap.FLOAT)
-        self.plot_item.setData(x=np.array(data['x']), y=np.array(data['z']), z=z, colors=c)
-        # x = np.linspace(-10, 10, 100)
-        # y = np.linspace(-10, 10, 100)
-        # z = np.sin(np.sqrt(x[:, np.newaxis] ** 2 + y[np.newaxis, :] ** 2 + np.random.rand() * 10))
-        # self.plot_item.setData(x=x, y=y, z=z)
+        x_data = np.array(data['x'])
+        z_data = np.array(data['z'])
+        amplitude = np.array(data['amplitude'])
+        self.plot_item.setData(x=x_data, y=z_data, z=amplitude)
+        self.plot_item.shader()['colorMap'] = cet_l4(amplitude)
 
     def closeEvent(self, event: QtGui.QCloseEvent):
         State.del_d3()

@@ -171,29 +171,17 @@ class Commands:
 			if result1 == Result.Ok and result2 == Result.Ok and result3 == Result.Ok:
 				self.lib.msec_sleep(10)
 
+
 	def wait_for_stop_x(self):
-		stat = status_t()
-		stat.MvCmdSts |= 0x80
-		while (stat.MvCmdSts & MvcmdStatus.MVCMD_RUNNING) > 0:
-			result = self.lib.get_status(self.id_x, byref(stat))
-			if result == Result.Ok:
-				self.lib.msec_sleep(10)
+		self.lib.command_wait_for_stop(self.id_x, 100)
+
 
 	def wait_for_stop_y(self):
-		stat = status_t()
-		stat.MvCmdSts |= 0x80
-		while (stat.MvCmdSts & MvcmdStatus.MVCMD_RUNNING) > 0:
-			result = self.lib.get_status(self.id_y, byref(stat))
-			if result == Result.Ok:
-				self.lib.msec_sleep(10)
+		self.lib.command_wait_for_stop(self.id_y, 100)
+
 
 	def wait_for_stop_z(self):
-		stat = status_t()
-		stat.MvCmdSts |= 0x80
-		while (stat.MvCmdSts & MvcmdStatus.MVCMD_RUNNING) > 0:
-			result = self.lib.get_status(self.id_z, byref(stat))
-			if result == Result.Ok:
-				self.lib.msec_sleep(10)
+		self.lib.command_wait_for_stop(self.id_z, 100)
 
 	def move_left(self, device_id):
 		"""
@@ -224,7 +212,7 @@ class Commands:
 		:param position: the position of the destination.
 		"""
 		self.lib.command_move_calb(self.id_x, c_float(position), byref(self.user_unit))
-		self.wait_for_stop()
+		self.wait_for_stop_x()
 
 	def move_y(self, position):
 		"""
@@ -232,7 +220,7 @@ class Commands:
 		:param position: the position of the destination.
 		"""
 		self.lib.command_move_calb(self.id_y, c_float(position), byref(self.user_unit))
-		self.wait_for_stop()
+		self.wait_for_stop_y()
 
 	def move_z(self, position):
 		"""
@@ -240,7 +228,7 @@ class Commands:
 		:param position: the position of the destination
 		"""
 		self.lib.command_move_calb(self.id_z, c_float(position), byref(self.user_unit))
-		self.wait_for_stop()
+		self.wait_for_stop_z()
 
 	def shift_axis(self, device_id, distance):
 		"""

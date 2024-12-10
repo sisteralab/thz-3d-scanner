@@ -27,7 +27,7 @@ class VNABlock(BaseInstrument):
         host: str = "169.254.106.189",
         port: int = 5025,
     ):
-        self.adapter = SocketAdapter(host=host, port=port)
+        self.adapter = SocketAdapter(host=host, port=port, delay=0.1)
 
     def idn(self) -> str:
         return self.query("*IDN?")
@@ -122,27 +122,25 @@ class VNABlock(BaseInstrument):
         attempts = 5
         attempt = 0
         while attempt < attempts:
-            time.sleep(0.05)
             attempt += 1
             response = self.query("CALC:DATA? FDAT").split(",")
             try:
                 resp = [float(i) for i in response]
             except ValueError:
                 logger.error(f"[{self.__class__.__name__}.get_data] Value error!")
+                time.sleep(0.05)
                 continue
             if np.sum(np.abs(resp)) > 0:
                 real = resp[::2]
                 imag = resp[1::2]
-                param = self.get_parameter_catalog()["Trc1"]
-                power = self.get_power()
 
                 return {
                     "real": real,
                     "imag": imag,
-                    "amplitude": 20 * np.log10(np.abs([r + i * 1j for r, i in zip(real, imag)])),
-                    "frequency": self.get_cw_frequency(),
-                    "parameter": param,
-                    "power": power,
+                    "amplitude": list(20 * np.log10(np.abs([r + i * 1j for r, i in zip(real, imag)]))),
+                    # "frequency": self.get_cw_frequency(),
+                    # "parameter": param,
+                    # "power": power,
                 }
         return {}
 
