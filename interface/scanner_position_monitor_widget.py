@@ -128,12 +128,12 @@ class ScannerPositionMonitorWidget(QGroupBox):
         if not self.monitor_thread:
             self.monitor_thread = MonitorThread()
 
-        self.btn_start_monitor.setEnabled(False)
+        self.btn_start_monitor.set_enabled(False, True)
         self.btn_stop_monitor.setEnabled(True)
 
         self.monitor_thread.positions.connect(self.update_positions)
-        self.monitor_thread.finished.connect(lambda: self.btn_stop_monitor.setEnabled(False))
-        self.monitor_thread.finished.connect(lambda: self.btn_start_monitor.setEnabled(True))
+        self.monitor_thread.finished.connect(lambda: self.btn_stop_monitor.set_enabled(False))
+        self.monitor_thread.finished.connect(lambda: self.btn_start_monitor.set_enabled(True))
 
         State.monitor_running = True
         self.monitor_thread.start()
