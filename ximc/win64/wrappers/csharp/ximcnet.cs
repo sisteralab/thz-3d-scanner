@@ -12,7 +12,7 @@ namespace ximc
 		public double A;
 		public uint MicrostepMode;
 	};
-	
+
 
 	public static class Version
 	{
@@ -1314,7 +1314,7 @@ namespace ximc
 
 
 	public partial class API
-	{   
+	{
 		private class Impl
 		{
 			[DllImport("libximc.dll")]
@@ -1327,7 +1327,7 @@ namespace ximc
 		public static extern Result close_device (ref int id);
 		[DllImport("libximc.dll", CharSet = CharSet.Ansi)]
 		public static extern Result probe_device ([MarshalAs(UnmanagedType.LPStr)] String name);
-		
+
 		[DllImport("libximc.dll")]
 		public static extern Result reset_locks ();
 		[DllImport("libximc.dll", CharSet = CharSet.Ansi)]
@@ -1352,7 +1352,7 @@ namespace ximc
 		public static extern void msec_sleep(int id);
 		[DllImport("libximc.dll", CharSet = CharSet.Ansi)]
 		public static extern void ximc_version(StringBuilder version);
-		
+
 		[DllImport("libximc.dll", CharSet = CharSet.Ansi)]
 		public static extern IntPtr enumerate_devices(int enumerate_flags, [MarshalAs(UnmanagedType.LPStr)] String hints);
 		[DllImport("libximc.dll")]
@@ -1370,7 +1370,7 @@ namespace ximc
 
 
 		[DllImport("libximc.dll")]
-		public static extern Result get_enumerate_device_information(IntPtr device_enumeration, int device_index, 
+		public static extern Result get_enumerate_device_information(IntPtr device_enumeration, int device_index,
 				out device_information_t device_information);
 		[DllImport("libximc.dll")]
 		public static extern Result get_enumerate_device_serial(IntPtr device_enumeration, int device_index,
@@ -1381,10 +1381,10 @@ namespace ximc
 		[UnmanagedFunctionPointer(CallingConvention.StdCall)]
 		public delegate void LoggingCallback ([MarshalAs(UnmanagedType.I4)] LogLevel loglevel,
 				[MarshalAs(UnmanagedType.LPWStr)] string message, IntPtr user_data);
-		
+
 		[DllImport("libximc.dll")]
 		public static extern void set_logging_callback([MarshalAs(UnmanagedType.FunctionPtr)] LoggingCallback logging_callback, IntPtr user_data);
-	
+
 		[DllImport("libximc.dll")]
 		public static extern Result command_wait_for_stop(int id, int wait_interval_ms);
 
@@ -1393,4 +1393,3 @@ namespace ximc
 	};
 
 };
-

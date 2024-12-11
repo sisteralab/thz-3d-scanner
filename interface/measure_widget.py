@@ -2,20 +2,20 @@ import json
 from datetime import datetime
 
 import numpy as np
-from PySide6.QtGui import Qt
-
-from PySide6.QtWidgets import (
-    QHBoxLayout,
-    QVBoxLayout,
-    QFormLayout,
-    QSpinBox,
-    QGroupBox,
-    QProgressBar,
-    QDoubleSpinBox,
-    QGridLayout,
-    QLabel,
-)
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import Qt
+from PySide6.QtWidgets import (
+    QDoubleSpinBox,
+    QFormLayout,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QSpinBox,
+    QVBoxLayout,
+)
 
 from interface.ui.Button import Button
 from interface.ui.DoubleSpinBox import DoubleSpinBox
@@ -29,14 +29,7 @@ class MeasureThread(QThread):
     remaining_time = Signal(str)
 
     def __init__(
-        self,
-        x_range,
-        y_range,
-        z_range,
-        vna_power,
-        vna_start,
-        vna_stop,
-        vna_points
+        self, x_range, y_range, z_range, vna_power, vna_start, vna_stop, vna_points
     ):
         super().__init__()
         self.x_range = x_range
@@ -77,21 +70,23 @@ class MeasureThread(QThread):
                     State.d3.move_z(z)
                     self.msleep(100)
                     vna_data = State.vna.get_data()
-                    dat = np.mean(vna_data['amplitude'])
+                    dat = np.mean(vna_data["amplitude"])
                     print(f"{datetime.now()} {dat} dB")
-                    full_data['amplitude'][step_x][step_z] = dat
-                    full_data['vna_data'].append(vna_data)
+                    full_data["amplitude"][step_x][step_z] = dat
+                    full_data["vna_data"].append(vna_data)
                     self.data.emit(full_data)
                     step += 1
                     self.progress.emit(int(round(step * 100 / total_steps)))
-                    self.remaining_time.emit(f"Approx time ~ {steps_to_time(total_steps - step - 1)}")
+                    self.remaining_time.emit(
+                        f"Approx time ~ {steps_to_time(total_steps - step - 1)}"
+                    )
                     if not State.measure_running:
                         break
 
         with open(
-                f"data/meas_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json",
-                "w",
-                encoding="utf-8",
+            f"data/meas_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json",
+            "w",
+            encoding="utf-8",
         ) as f:
             json.dump(full_data, f, ensure_ascii=False, indent=4)
 
@@ -239,9 +234,15 @@ class MeasureWidget(QGroupBox):
 
     def start_measure(self):
         self.measure_thread = MeasureThread(
-            x_range=np.linspace(self.x_start.value(), self.x_stop.value(), self.x_points.value()),
-            y_range=np.linspace(self.y_start.value(), self.y_stop.value(), self.y_points.value()),
-            z_range=np.linspace(self.z_start.value(), self.z_stop.value(), self.z_points.value()),
+            x_range=np.linspace(
+                self.x_start.value(), self.x_stop.value(), self.x_points.value()
+            ),
+            y_range=np.linspace(
+                self.y_start.value(), self.y_stop.value(), self.y_points.value()
+            ),
+            z_range=np.linspace(
+                self.z_start.value(), self.z_stop.value(), self.z_points.value()
+            ),
             vna_power=-90,
             vna_start=0,
             vna_stop=0.1,
@@ -250,9 +251,15 @@ class MeasureWidget(QGroupBox):
 
         self.measure_thread.data.connect(self.parent().parent().parent().update_plot)
         self.measure_thread.progress.connect(lambda x: self.progress_bar.setValue(x))
-        self.measure_thread.remaining_time.connect(lambda x: self.approx_time.setText(x))
-        self.measure_thread.finished.connect(lambda: self.btn_start_measure.set_enabled(True))
-        self.measure_thread.finished.connect(lambda: self.btn_stop_measure.set_enabled(False))
+        self.measure_thread.remaining_time.connect(
+            lambda x: self.approx_time.setText(x)
+        )
+        self.measure_thread.finished.connect(
+            lambda: self.btn_start_measure.set_enabled(True)
+        )
+        self.measure_thread.finished.connect(
+            lambda: self.btn_stop_measure.set_enabled(False)
+        )
         self.measure_thread.finished.connect(lambda: self.progress_bar.setValue(0))
 
         State.measure_running = True
@@ -261,40 +268,61 @@ class MeasureWidget(QGroupBox):
         self.btn_stop_measure.set_enabled(True)
 
     def stop_measure(self):
-        State.measure_running = False
+        reply = QMessageBox.question(
+            self,
+            "Остановка измерение",
+            "Уверены, что хотите остановить измерние, продолжить?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            State.measure_running = False
 
     def update_x_step(self):
-        step = np.abs(self.x_stop.value() - self.x_start.value()) / self.x_points.value()
+        step = (
+            np.abs(self.x_stop.value() - self.x_start.value()) / self.x_points.value()
+        )
         self.x_step.valueChanged.disconnect(self.update_x_points)
         self.x_step.setValue(step)
         self.x_step.valueChanged.connect(self.update_x_points)
 
     def update_x_points(self):
-        points = np.abs(self.x_stop.value() - self.x_start.value()) / self.x_step.value()
+        points = (
+            np.abs(self.x_stop.value() - self.x_start.value()) / self.x_step.value()
+        )
         self.x_points.valueChanged.disconnect(self.update_x_step)
         self.x_points.setValue(points)
         self.x_points.valueChanged.connect(self.update_x_step)
 
     def update_y_step(self):
-        step = np.abs(self.y_stop.value() - self.y_start.value()) / self.y_points.value()
+        step = (
+            np.abs(self.y_stop.value() - self.y_start.value()) / self.y_points.value()
+        )
         self.y_step.valueChanged.disconnect(self.update_y_points)
         self.y_step.setValue(step)
         self.y_step.valueChanged.connect(self.update_y_points)
 
     def update_y_points(self):
-        points = np.abs(self.y_stop.value() - self.y_start.value()) / self.y_step.value()
+        points = (
+            np.abs(self.y_stop.value() - self.y_start.value()) / self.y_step.value()
+        )
         self.y_points.valueChanged.disconnect(self.update_y_step)
         self.y_points.setValue(points)
         self.y_points.valueChanged.connect(self.update_y_step)
 
     def update_z_step(self):
-        step = np.abs(self.z_stop.value() - self.z_start.value()) / self.z_points.value()
+        step = (
+            np.abs(self.z_stop.value() - self.z_start.value()) / self.z_points.value()
+        )
         self.z_step.valueChanged.disconnect(self.update_z_points)
         self.z_step.setValue(step)
         self.z_step.valueChanged.connect(self.update_z_points)
 
     def update_z_points(self):
-        points = np.abs(self.z_stop.value() - self.z_start.value()) / self.z_step.value()
+        points = (
+            np.abs(self.z_stop.value() - self.z_start.value()) / self.z_step.value()
+        )
         self.z_points.valueChanged.disconnect(self.update_z_step)
         self.z_points.setValue(points)
         self.z_points.valueChanged.connect(self.update_z_step)

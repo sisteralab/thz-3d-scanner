@@ -1,7 +1,7 @@
 from typing import Optional
 
-from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QGridLayout, QHBoxLayout, QLabel, QPushButton
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtWidgets import QGridLayout, QGroupBox, QHBoxLayout, QLabel, QVBoxLayout
 from typing_extensions import Literal
 
 from interface.ui.Button import Button
@@ -17,11 +17,13 @@ class MonitorThread(QThread):
             x = State.d3.get_position(State.d3.id_x)
             y = State.d3.get_position(State.d3.id_y)
             z = State.d3.get_position(State.d3.id_z)
-            self.positions.emit({
-                "x": x,
-                "y": y,
-                "z": z,
-            })
+            self.positions.emit(
+                {
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                }
+            )
             self.msleep(100)
 
 
@@ -132,8 +134,12 @@ class ScannerPositionMonitorWidget(QGroupBox):
         self.btn_stop_monitor.setEnabled(True)
 
         self.monitor_thread.positions.connect(self.update_positions)
-        self.monitor_thread.finished.connect(lambda: self.btn_stop_monitor.set_enabled(False))
-        self.monitor_thread.finished.connect(lambda: self.btn_start_monitor.set_enabled(True))
+        self.monitor_thread.finished.connect(
+            lambda: self.btn_stop_monitor.set_enabled(False)
+        )
+        self.monitor_thread.finished.connect(
+            lambda: self.btn_start_monitor.set_enabled(True)
+        )
 
         State.monitor_running = True
         self.monitor_thread.start()

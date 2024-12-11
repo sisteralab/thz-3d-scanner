@@ -1,8 +1,8 @@
 class Config:
     # COM ports
-    AXIS_X_PORT: str = 'COM32'
-    AXIS_Y_PORT: str = 'COM33'
-    AXIS_Z_PORT: str = 'COM4'
+    AXIS_X_PORT: str = "COM32"
+    AXIS_Y_PORT: str = "COM33"
+    AXIS_Z_PORT: str = "COM4"
 
     # Movement settings in millimeters per second
     MAX_LINEAR_SPEED: int = 40

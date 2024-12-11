@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from interface.measure_widget import MeasureWidget
 from interface.scanner_position_monitor_widget import ScannerPositionMonitorWidget

@@ -26,4 +26,3 @@ class State:
     @classmethod
     def del_vna(cls):
         del cls.vna
-
