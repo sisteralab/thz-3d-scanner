@@ -27,7 +27,7 @@ class VNABlock(BaseInstrument):
         host: str = "169.254.106.189",
         port: int = 5025,
     ):
-        self.adapter = SocketAdapter(host=host, port=port, delay=0.1)
+        self.adapter = SocketAdapter(host=host, port=port, delay=0.05)
 
     def idn(self) -> str:
         return self.query("*IDN?")
@@ -149,14 +149,12 @@ class VNABlock(BaseInstrument):
 
 if __name__ == "__main__":
     vna = VNABlock()
-    # vna.set_parameter("BA")
-    # vna.set_sweep_type("CW")
-    # vna.set_parameter
     vna.set_parameter("BA")
-    vna.set_sweep_type("CW")
+    vna.set_sweep(100)
+    vna.set_power(-90)
     vna.set_channel_format("COMP")
-    vna.set_cw_frequency(3.067e9)
-    print(vna.get_parameter_catalog())
-    print(vna.get_channel_format())
-    print(vna.get_cw_frequency())
+    vna.set_average_count(10)
+    vna.set_average_status(False)
+    start_time = time.time()
     print(vna.get_data())
+    print(f"duration {time.time()-start_time:.3f}")

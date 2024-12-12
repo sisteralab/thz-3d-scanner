@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import datetime
 
 import numpy as np
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 from interface.ui.Button import Button
 from interface.ui.DoubleSpinBox import DoubleSpinBox
 from store.state import State
-from utils.functions import steps_to_time
+from utils.functions import steps_to_time, convert_seconds
 
 
 class MeasureThread(QThread):
@@ -58,6 +59,7 @@ class MeasureThread(QThread):
         }
         total_steps = len(self.y_range) * len(self.x_range) * len(self.z_range)
         step = 0
+        start_time = time.time()
         for step_y, y in enumerate(self.y_range):
             State.d3.move_y(y)
             if not State.measure_running:
@@ -68,7 +70,7 @@ class MeasureThread(QThread):
                     break
                 for step_z, z in enumerate(self.z_range):
                     State.d3.move_z(z)
-                    self.msleep(100)
+                    self.msleep(50)
                     vna_data = State.vna.get_data()
                     dat = np.mean(vna_data["amplitude"])
                     print(f"{datetime.now()} {dat} dB")
@@ -76,9 +78,11 @@ class MeasureThread(QThread):
                     full_data["vna_data"].append(vna_data)
                     self.data.emit(full_data)
                     step += 1
+                    now_time = time.time()
+                    velocity = step / (now_time - start_time)
                     self.progress.emit(int(round(step * 100 / total_steps)))
                     self.remaining_time.emit(
-                        f"Approx time ~ {steps_to_time(total_steps - step - 1)}"
+                        f"Approx time ~ {convert_seconds(round((total_steps - step) / velocity))}"
                     )
                     if not State.measure_running:
                         break
