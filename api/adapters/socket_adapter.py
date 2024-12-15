@@ -7,6 +7,7 @@ from utils.classes import InstrumentAdapterInterface
 from utils.exceptions import DeviceConnectionError
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.CRITICAL)
 
 
 class SocketAdapter(InstrumentAdapterInterface):

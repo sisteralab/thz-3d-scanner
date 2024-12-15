@@ -29,8 +29,6 @@ def cet_l4(z):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        State.init_scanner()
-        State.init_vna()
         self.setWindowTitle("Scanner 3D")
         self.setGeometry(100, 100, 1200, 600)
 
@@ -94,6 +92,6 @@ class MainWindow(QMainWindow):
         self.plot_item.shader()["colorMap"] = cet_l4(amplitude)
 
     def closeEvent(self, event: QtGui.QCloseEvent):
-        State.del_d3()
+        State.del_scanner()
         State.del_vna()
         event.accept()

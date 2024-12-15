@@ -67,35 +67,36 @@ class ScannerDevice:
         if result == Result.Ok:
             logger.info(" Serial: " + repr(x_serial.value))
 
-    def connect_devices(self):
+    def connect_devices(self) -> bool:
         """
         Open a device with OS uri and return identifier of the device which can be used in calls.
         """
         try:
             self.id_x = self.lib.open_device(self.x_port.encode())
             if self.id_x <= 0:
-                logger.info(f"Error open device X: {self.x_port}")
-                exit(1)
+                logger.error(f"Error open device X: {self.x_port}")
+                return False
             else:
                 logger.info("X axis device id: " + repr(self.id_x))
 
             self.id_y = self.lib.open_device(self.y_port.encode())
             if self.id_y <= 0:
-                logger.info(f"Error open device Y: {self.y_port}")
-                exit(1)
+                logger.error(f"Error open device Y: {self.y_port}")
+                return False
             else:
                 logger.info("Y axis device id: " + repr(self.id_y))
 
             self.id_z = self.lib.open_device(self.z_port.encode())
             if self.id_z <= 0:
-                logger.info(f"Error open device Z: {self.z_port}")
-                exit(1)
+                logger.error(f"Error open device Z: {self.z_port}")
+                return False
             else:
                 logger.info("Z axis device id: " + repr(self.id_z))
 
-        except:
-            logger.info("COM ports not configured correctly, please check your settings.")
-            # sys.exit()
+        except Exception as e:
+            logger.exception("COM ports not configured correctly, please check your settings.", exc_info=True)
+            return False
+        return True
 
     def set_units(self):
         """
