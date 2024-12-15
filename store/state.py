@@ -14,7 +14,11 @@ class State:
 
     @classmethod
     def init_scanner(cls) -> bool:
-        cls.scanner = ScannerDevice(x_port=ScannerConfig.AXIS_X_PORT, y_port=ScannerConfig.AXIS_Y_PORT, z_port=ScannerConfig.AXIS_Z_PORT)
+        cls.scanner = ScannerDevice(
+            x_port=ScannerConfig.AXIS_X_PORT,
+            y_port=ScannerConfig.AXIS_Y_PORT,
+            z_port=ScannerConfig.AXIS_Z_PORT,
+        )
         status = cls.scanner.connect_devices()
         if not status:
             cls.del_scanner()

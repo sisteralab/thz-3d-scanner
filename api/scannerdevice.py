@@ -21,7 +21,9 @@ class ScannerDevice:
         self.z_port = f"xi-com:\\\\.\\{z_port}"
 
         if self.lib:
-            logger.info("Command class initialized, stepper library loaded successfully.")
+            logger.info(
+                "Command class initialized, stepper library loaded successfully."
+            )
         else:
             logger.error("Unable find ximc library")
 
@@ -94,7 +96,10 @@ class ScannerDevice:
                 logger.info("Z axis device id: " + repr(self.id_z))
 
         except Exception as e:
-            logger.exception("COM ports not configured correctly, please check your settings.", exc_info=True)
+            logger.exception(
+                "COM ports not configured correctly, please check your settings.",
+                exc_info=True,
+            )
             return False
         return True
 
@@ -388,7 +393,9 @@ class ScannerDevice:
         self.lib.close_device(byref(cast(self.id_y, POINTER(c_int))))
         self.lib.close_device(byref(cast(self.id_z, POINTER(c_int))))
 
-    def initial_setup(self, max_linear_speed: float, acceleration: float, deceleration: float):
+    def initial_setup(
+        self, max_linear_speed: float, acceleration: float, deceleration: float
+    ):
         """
         A coroutine for initial start.
         :return:
@@ -397,7 +404,5 @@ class ScannerDevice:
         self.set_units()
 
         for _ in range(1, 4):
-            self.set_move_settings(
-                _, max_linear_speed, acceleration, deceleration
-            )
+            self.set_move_settings(_, max_linear_speed, acceleration, deceleration)
         # self.go_home()

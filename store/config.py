@@ -16,4 +16,3 @@ class ScannerConfig:
 class VnaConfig:
     HOST: str = "169.254.106.189"
     PORT: int = 5025
-

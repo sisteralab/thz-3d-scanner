@@ -14,7 +14,9 @@ class LogWidget(QtWidgets.QGroupBox):
         layout = QtWidgets.QHBoxLayout()
         self.content = QtWidgets.QTextEdit(self)
         self.content.setReadOnly(True)
-        self.content.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        self.content.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
+        )
 
         self.btn_clear = QtWidgets.QPushButton("Clear", self)
         self.btn_clear.clicked.connect(self.clear_log)
@@ -28,7 +30,9 @@ class LogWidget(QtWidgets.QGroupBox):
         lines.append(text)
         lines = lines[-50:]
         self.content.setPlainText("\n".join(lines))
-        self.content.verticalScrollBar().setValue(self.content.verticalScrollBar().maximum())
+        self.content.verticalScrollBar().setValue(
+            self.content.verticalScrollBar().maximum()
+        )
 
     def clear_log(self):
         self.content.clear()

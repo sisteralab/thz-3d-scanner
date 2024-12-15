@@ -31,7 +31,7 @@ class MonitorThread(QThread):
                     }
                 )
                 self.msleep(100)
-        except(AttributeError, Exception) as e:
+        except (AttributeError, Exception) as e:
             self.log.emit({"type": "error", "msg": f"{e}"})
 
 
@@ -47,7 +47,7 @@ class MoveThread(QThread):
         try:
             method = getattr(State.scanner, f"move_{self.axis}")
             method(self.position)
-        except(AttributeError, Exception) as e:
+        except (AttributeError, Exception) as e:
             self.log.emit({"type": "error", "msg": f"{e}"})
 
 

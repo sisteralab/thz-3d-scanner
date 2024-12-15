@@ -45,7 +45,7 @@ except ImportError as err:
     logger.exception(
         "Can't import pyximc module. The most probable reason is that you changed the relative location of the "
         "test_Python.py and pyximc.py files. See developers' documentation for details.",
-        exc_info=True
+        exc_info=True,
     )
     exit()
 except OSError as err:
