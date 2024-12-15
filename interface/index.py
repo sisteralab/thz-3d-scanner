@@ -1,8 +1,11 @@
+import logging
+
 import numpy as np
 import pyqtgraph.opengl as gl
 from PySide6 import QtGui
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QWidget, QVBoxLayout
 
+from interface.log import LogHandler, LogWidget
 from interface.manager_widget import ManagerWidget
 from store.state import State
 
@@ -23,10 +26,10 @@ def cet_l4(z):
     ]
 
 
-class Scanner3D(QMainWindow):
+class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        State.init_d3()
+        State.init_scanner()
         State.init_vna()
         self.setWindowTitle("Scanner 3D")
         self.setGeometry(100, 100, 1200, 600)
@@ -35,6 +38,7 @@ class Scanner3D(QMainWindow):
         self.setCentralWidget(self.central_widget)
 
         self.layout = QHBoxLayout(self.central_widget)
+        left_layout = QVBoxLayout()
 
         self.manager_widget = ManagerWidget(self)
 
@@ -44,13 +48,16 @@ class Scanner3D(QMainWindow):
             smooth=False, computeNormals=False, shader="heightColor"
         )
         self.plot_widget.addItem(self.plot_item)
-
-        # Добавление сетки
         gy = gl.GLGridItem(color="grey")
         gy.rotate(90, 1, 0, 0)
         self.plot_widget.addItem(gy)
 
-        self.layout.addWidget(self.plot_widget)
+        self.log_widget = LogWidget(self)
+
+        left_layout.addWidget(self.plot_widget)
+        left_layout.addWidget(self.log_widget)
+
+        self.layout.addLayout(left_layout)
         self.layout.addWidget(self.manager_widget)
 
         self.update_plot(
@@ -66,6 +73,18 @@ class Scanner3D(QMainWindow):
                 "z": [-20, -10, 10, 20],
             }
         )
+
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        log_widget_handler = LogHandler(self.log_widget)
+        stream_handler = logging.StreamHandler()
+        formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
+        log_widget_handler.setFormatter(formatter)
+        stream_handler.setFormatter(formatter)
+
+        logger.addHandler(log_widget_handler)
+        logger.addHandler(stream_handler)
 
     def update_plot(self, data):
         x_data = np.array(data["x"])

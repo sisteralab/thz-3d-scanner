@@ -1,4 +1,4 @@
-class Config:
+class ScannerConfig:
     # COM ports
     AXIS_X_PORT: str = "COM32"
     AXIS_Y_PORT: str = "COM33"
@@ -11,3 +11,9 @@ class Config:
     SAFE_X = 0
     SAFE_Y = 0
     SAFE_Z = 0
+
+
+class VnaConfig:
+    HOST: str = "169.254.106.189"
+    PORT: int = 5025
+

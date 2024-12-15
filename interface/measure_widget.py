@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from datetime import datetime
 
@@ -24,10 +25,14 @@ from store.state import State
 from utils.functions import steps_to_time, convert_seconds
 
 
+logger = logging.getLogger(__name__)
+
+
 class MeasureThread(QThread):
     data = Signal(dict)
     progress = Signal(int)
     remaining_time = Signal(str)
+    log = Signal(dict)
 
     def __init__(
         self, x_range, y_range, z_range, vna_power, vna_start, vna_stop, vna_points
@@ -42,57 +47,64 @@ class MeasureThread(QThread):
         self.vna_points = vna_points
 
     def run(self):
-        State.vna.set_parameter("BA")
-        State.vna.set_start_time(self.vna_start)
-        State.vna.set_stop_time(self.vna_stop)
-        State.vna.set_sweep(self.vna_points)
-        State.vna.set_power(self.vna_power)
-        State.vna.set_channel_format("COMP")
-        State.vna.set_average_count(10)
-        State.vna.set_average_status(False)
-        full_data = {
-            "x": self.x_range.tolist(),
-            "y": self.y_range.tolist(),
-            "z": self.z_range.tolist(),
-            "amplitude": np.zeros((len(self.x_range), len(self.z_range))).tolist(),
-            "vna_data": [],
-        }
-        total_steps = len(self.y_range) * len(self.x_range) * len(self.z_range)
-        step = 0
-        start_time = time.time()
-        for step_y, y in enumerate(self.y_range):
-            State.d3.move_y(y)
-            if not State.measure_running:
-                break
-            for step_x, x in enumerate(self.x_range):
-                State.d3.move_x(x)
+        try:
+            State.vna.set_parameter("BA")
+            State.vna.set_start_time(self.vna_start)
+            State.vna.set_stop_time(self.vna_stop)
+            State.vna.set_sweep(self.vna_points)
+            State.vna.set_power(self.vna_power)
+            State.vna.set_channel_format("COMP")
+            State.vna.set_average_count(10)
+            State.vna.set_average_status(False)
+            full_data = {
+                "x": self.x_range.tolist(),
+                "y": self.y_range.tolist(),
+                "z": self.z_range.tolist(),
+                "amplitude": np.zeros((len(self.x_range), len(self.z_range))).tolist(),
+                "vna_data": [],
+            }
+            total_steps = len(self.y_range) * len(self.x_range) * len(self.z_range)
+            step = 0
+            start_time = time.time()
+            for step_y, y in enumerate(self.y_range):
+                State.scanner.move_y(y)
                 if not State.measure_running:
                     break
-                for step_z, z in enumerate(self.z_range):
-                    State.d3.move_z(z)
-                    self.msleep(50)
-                    vna_data = State.vna.get_data()
-                    dat = np.mean(vna_data["amplitude"])
-                    print(f"{datetime.now()} {dat} dB")
-                    full_data["amplitude"][step_x][step_z] = dat
-                    full_data["vna_data"].append(vna_data)
-                    self.data.emit(full_data)
-                    step += 1
-                    now_time = time.time()
-                    velocity = step / (now_time - start_time)
-                    self.progress.emit(int(round(step * 100 / total_steps)))
-                    self.remaining_time.emit(
-                        f"Approx time ~ {convert_seconds(round((total_steps - step) / velocity))}"
-                    )
+                for step_x, x in enumerate(self.x_range):
+                    State.scanner.move_x(x)
                     if not State.measure_running:
                         break
+                    for step_z, z in enumerate(self.z_range):
+                        State.scanner.move_z(z)
+                        self.msleep(50)
+                        vna_data = State.vna.get_data()
+                        dat = np.mean(vna_data["amplitude"])
+                        self.log.emit({"type": "info", "msg": f"{dat} dB"})
+                        full_data["amplitude"][step_x][step_z] = dat
+                        full_data["vna_data"].append(vna_data)
+                        self.data.emit(full_data)
+                        step += 1
+                        now_time = time.time()
+                        velocity = step / (now_time - start_time)
+                        self.progress.emit(int(round(step * 100 / total_steps)))
+                        self.remaining_time.emit(
+                            f"Approx time ~ {convert_seconds(round((total_steps - step) / velocity))}"
+                        )
+                        if not State.measure_running:
+                            break
 
-        with open(
-            f"data/meas_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json",
-            "w",
-            encoding="utf-8",
-        ) as f:
-            json.dump(full_data, f, ensure_ascii=False, indent=4)
+            with open(
+                f"data/meas_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json",
+                "w",
+                encoding="utf-8",
+            ) as f:
+                json.dump(full_data, f, ensure_ascii=False, indent=4)
+
+        except (AttributeError, Exception) as e:
+            self.log.emit({"type": "error", "msg": f"{e}"})
+            self.finished.emit()
+
+        self.finished.emit()
 
 
 class MeasureWidget(QGroupBox):
@@ -265,6 +277,7 @@ class MeasureWidget(QGroupBox):
             lambda: self.btn_stop_measure.set_enabled(False)
         )
         self.measure_thread.finished.connect(lambda: self.progress_bar.setValue(0))
+        self.measure_thread.log.connect(self.set_log)
 
         State.measure_running = True
         self.measure_thread.start()
@@ -334,3 +347,13 @@ class MeasureWidget(QGroupBox):
     def update_approx_time(self):
         steps = self.x_points.value() * self.y_points.value() * self.z_points.value()
         self.approx_time.setText(f"Approx time ~ {steps_to_time(steps)}")
+
+    @staticmethod
+    def set_log(log: dict):
+        log_type = log.get("type")
+        if not log_type:
+            return
+        method = getattr(logger, log_type, None)
+        if not method:
+            return
+        method(log.get("msg"))

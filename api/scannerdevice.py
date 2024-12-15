@@ -1,12 +1,14 @@
-from ctypes import *
+import logging
 
 import loader
 from pyximc import *
-from store.config import Config
 
 
-class Commands:
-    def __init__(self):
+logger = logging.getLogger(__name__)
+
+
+class ScannerDevice:
+    def __init__(self, x_port: str, y_port: str, z_port: str):
         self.user_unit = None
         self.steps_per_revolution = 200
         self.lead_screw_pitch = 2.5
@@ -14,36 +16,39 @@ class Commands:
         self.id_y = None
         self.id_z = None
         self.lib = loader.lib
+        self.x_port = f"xi-com:\\\\.\\{x_port}"
+        self.y_port = f"xi-com:\\\\.\\{y_port}"
+        self.z_port = f"xi-com:\\\\.\\{z_port}"
 
         if self.lib:
-            print("Command class initialized, stepper library loaded successfully.")
+            logger.info("Command class initialized, stepper library loaded successfully.")
         else:
-            exit()
+            logger.error("Unable find ximc library")
 
     def test_info(self, device_id):
         """
         Reading information about the device.
         :param device_id: device id.
         """
-        print("\nGet device info")
+        logger.info("\nGet device info")
         x_device_information = device_information_t()
         result = self.lib.get_device_information(device_id, byref(x_device_information))
-        print("Result: " + repr(result))
+        logger.info("Result: " + repr(result))
         if result == Result.Ok:
-            print("Device information:")
-            print(
+            logger.info("Device information:")
+            logger.info(
                 " Manufacturer: "
                 + repr(string_at(x_device_information.Manufacturer).decode())
             )
-            print(
+            logger.info(
                 " ManufacturerId: "
                 + repr(string_at(x_device_information.ManufacturerId).decode())
             )
-            print(
+            logger.info(
                 " ProductDescription: "
                 + repr(string_at(x_device_information.ProductDescription).decode())
             )
-            print(
+            logger.info(
                 " Hardware version: "
                 + repr(x_device_information.Major)
                 + "."
@@ -60,39 +65,36 @@ class Commands:
         x_serial = c_uint()
         result = self.lib.get_serial_number(device_id, byref(x_serial))
         if result == Result.Ok:
-            print(" Serial: " + repr(x_serial.value))
+            logger.info(" Serial: " + repr(x_serial.value))
 
     def connect_devices(self):
         """
         Open a device with OS uri and return identifier of the device which can be used in calls.
         """
         try:
-            xport = f"xi-com:\\\\.\\{Config.AXIS_X_PORT}"
-            yport = f"xi-com:\\\\.\\{Config.AXIS_Y_PORT}"
-            zport = f"xi-com:\\\\.\\{Config.AXIS_Z_PORT}"
-            self.id_x = self.lib.open_device(xport.encode())
+            self.id_x = self.lib.open_device(self.x_port.encode())
             if self.id_x <= 0:
-                print(f"Error open device X: {xport}")
+                logger.info(f"Error open device X: {self.x_port}")
                 exit(1)
             else:
-                print("X axis device id: " + repr(self.id_x))
+                logger.info("X axis device id: " + repr(self.id_x))
 
-            self.id_y = self.lib.open_device(yport.encode())
+            self.id_y = self.lib.open_device(self.y_port.encode())
             if self.id_y <= 0:
-                print(f"Error open device Y: {yport}")
+                logger.info(f"Error open device Y: {self.y_port}")
                 exit(1)
             else:
-                print("Y axis device id: " + repr(self.id_y))
+                logger.info("Y axis device id: " + repr(self.id_y))
 
-            self.id_z = self.lib.open_device(zport.encode())
+            self.id_z = self.lib.open_device(self.z_port.encode())
             if self.id_z <= 0:
-                print(f"Error open device Z: {zport}")
+                logger.info(f"Error open device Z: {self.z_port}")
                 exit(1)
             else:
-                print("Z axis device id: " + repr(self.id_z))
+                logger.info("Z axis device id: " + repr(self.id_z))
 
         except:
-            print("COM ports not configured correctly, please check your settings.")
+            logger.info("COM ports not configured correctly, please check your settings.")
             # sys.exit()
 
     def set_units(self):
@@ -105,7 +107,7 @@ class Commands:
 
         user_unit.A = 0.0125
         self.user_unit = user_unit
-        print(f"Scale factor set to: {user_unit.A} mm/step")
+        logger.info(f"Scale factor set to: {user_unit.A} mm/step")
 
     def set_move_settings(self, device_id, speed, asel, decel):
         """
@@ -327,7 +329,7 @@ class Commands:
         result = self.lib.set_edges_settings(device_id, byref(edgst))
 
         if result == Result.Ok:
-            print(f"Limits set for axis {device_id}")
+            logger.info(f"Limits set for axis {device_id}")
 
     def unset_axis_limits(self, device_id):
         edgst = edges_settings_t()
@@ -337,7 +339,7 @@ class Commands:
 
         result = self.lib.set_edges_settings(device_id, byref(edgst))
         if result == Result.Ok:
-            print(f"Limits set for axis {device_id}")
+            logger.info(f"Limits set for axis {device_id}")
 
     def get_axis_limits(self):
         device_list = [self.id_x, self.id_y, self.id_z]
@@ -385,7 +387,7 @@ class Commands:
         self.lib.close_device(byref(cast(self.id_y, POINTER(c_int))))
         self.lib.close_device(byref(cast(self.id_z, POINTER(c_int))))
 
-    def initial_setup(self):
+    def initial_setup(self, max_linear_speed: float, acceleration: float, deceleration: float):
         """
         A coroutine for initial start.
         :return:
@@ -395,6 +397,6 @@ class Commands:
 
         for _ in range(1, 4):
             self.set_move_settings(
-                _, Config.MAX_LINEAR_SPEED, Config.ACCELERATION, Config.DECELERATION
+                _, max_linear_speed, acceleration, deceleration
             )
         # self.go_home()

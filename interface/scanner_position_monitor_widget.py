@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -7,35 +8,47 @@ from typing_extensions import Literal
 from interface.ui.Button import Button
 from interface.ui.DoubleSpinBox import DoubleSpinBox
 from store.state import State
+from utils.exceptions import exception_no_devices
+
+logger = logging.getLogger(__name__)
 
 
 class MonitorThread(QThread):
     positions = Signal(dict)
+    log = Signal(dict)
 
     def run(self) -> None:
-        while State.monitor_running:
-            x = State.d3.get_position(State.d3.id_x)
-            y = State.d3.get_position(State.d3.id_y)
-            z = State.d3.get_position(State.d3.id_z)
-            self.positions.emit(
-                {
-                    "x": x,
-                    "y": y,
-                    "z": z,
-                }
-            )
-            self.msleep(100)
+        try:
+            while State.monitor_running:
+                x = State.scanner.get_position(State.scanner.id_x)
+                y = State.scanner.get_position(State.scanner.id_y)
+                z = State.scanner.get_position(State.scanner.id_z)
+                self.positions.emit(
+                    {
+                        "x": x,
+                        "y": y,
+                        "z": z,
+                    }
+                )
+                self.msleep(100)
+        except(AttributeError, Exception) as e:
+            self.log.emit({"type": "error", "msg": f"{e}"})
 
 
 class MoveThread(QThread):
+    log = Signal(dict)
+
     def __init__(self, axis: Literal["x", "y", "z"], position: float):
         super().__init__()
         self.axis = axis
         self.position = position
 
     def run(self) -> None:
-        method = getattr(State.d3, f"move_{self.axis}")
-        method(self.position)
+        try:
+            method = getattr(State.scanner, f"move_{self.axis}")
+            method(self.position)
+        except(AttributeError, Exception) as e:
+            self.log.emit({"type": "error", "msg": f"{e}"})
 
 
 class ScannerPositionMonitorWidget(QGroupBox):
@@ -140,7 +153,7 @@ class ScannerPositionMonitorWidget(QGroupBox):
         self.monitor_thread.finished.connect(
             lambda: self.btn_start_monitor.set_enabled(True)
         )
-
+        self.monitor_thread.log.connect(self.set_log)
         State.monitor_running = True
         self.monitor_thread.start()
 
@@ -154,6 +167,7 @@ class ScannerPositionMonitorWidget(QGroupBox):
 
     def set_position(self, axis: Literal["x", "y", "z"]):
         if self.move_thread and self.move_thread.isRunning():
+            logger.info("Scanner is moving, wait please")
             return
 
         variable = getattr(self, f"{axis}_value_set")
@@ -169,6 +183,16 @@ class ScannerPositionMonitorWidget(QGroupBox):
 
         self.move_thread.start()
 
+    @staticmethod
+    def set_log(log: dict):
+        log_type = log.get("type")
+        if not log_type:
+            return
+        method = getattr(logger, log_type, None)
+        if not method:
+            return
+        method(log.get("msg"))
+
     def set_x(self):
         self.set_position(axis="x")
 
@@ -178,14 +202,18 @@ class ScannerPositionMonitorWidget(QGroupBox):
     def set_z(self):
         self.set_position(axis="z")
 
+    @exception_no_devices
     def set_x_zero(self):
-        State.d3.set_axis_origin(State.d3.id_x)
+        State.scanner.set_axis_origin(State.scanner.id_x)
 
+    @exception_no_devices
     def set_y_zero(self):
-        State.d3.set_axis_origin(State.d3.id_y)
+        State.scanner.set_axis_origin(State.scanner.id_y)
 
+    @exception_no_devices
     def set_z_zero(self):
-        State.d3.set_axis_origin(State.d3.id_z)
+        State.scanner.set_axis_origin(State.scanner.id_z)
 
+    @exception_no_devices
     def emergency_stop(self):
-        State.d3.emergency_stop()
+        State.scanner.emergency_stop()
