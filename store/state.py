@@ -14,6 +14,7 @@ class State:
 
     @classmethod
     def init_scanner(cls) -> bool:
+        cls.del_scanner()
         cls.scanner = ScannerDevice(
             x_port=ScannerConfig.AXIS_X_PORT,
             y_port=ScannerConfig.AXIS_Y_PORT,
@@ -29,6 +30,7 @@ class State:
     @classmethod
     def init_vna(cls) -> bool:
         try:
+            cls.del_vna()
             cls.vna = VNABlock(
                 host=VnaConfig.HOST,
                 port=VnaConfig.PORT,
