@@ -1,8 +1,14 @@
 from typing_extensions import Optional
 
 from api.scannerdevice import ScannerDevice
+from api.signal_generator import SignalGenerator
 from api.vna import VNABlock
-from store.config import VnaConfig, ScannerConfig
+from store.config import (
+    VnaConfig,
+    ScannerConfig,
+    SignalGeneratorConfig1,
+    SignalGeneratorConfig2,
+)
 from utils.exceptions import DeviceConnectionError
 
 
@@ -11,6 +17,8 @@ class State:
     monitor_running = False
     scanner: Optional[ScannerDevice] = None
     vna: Optional[VNABlock] = None
+    generator_1: Optional[SignalGenerator] = None
+    generator_2: Optional[SignalGenerator] = None
 
     @classmethod
     def init_scanner(cls) -> bool:
@@ -46,6 +54,44 @@ class State:
         return True
 
     @classmethod
+    def init_generator_1(cls) -> bool:
+        try:
+            cls.del_generator_1()
+            cls.generator_1 = SignalGenerator(
+                host=SignalGeneratorConfig1.HOST,
+                port=SignalGeneratorConfig1.PORT,
+                gpib=SignalGeneratorConfig1.GPIB,
+            )
+        except DeviceConnectionError:
+            cls.generator_1 = None
+            return False
+
+        test_result = cls.generator_1.test()
+        if not test_result:
+            cls.generator_1 = None
+            return False
+        return True
+
+    @classmethod
+    def init_generator_2(cls) -> bool:
+        try:
+            cls.del_generator_2()
+            cls.generator_2 = SignalGenerator(
+                host=SignalGeneratorConfig2.HOST,
+                port=SignalGeneratorConfig2.PORT,
+                gpib=SignalGeneratorConfig2.GPIB,
+            )
+        except DeviceConnectionError:
+            cls.generator_2 = None
+            return False
+
+        test_result = cls.generator_2.test()
+        if not test_result:
+            cls.generator_2 = None
+            return False
+        return True
+
+    @classmethod
     def del_scanner(cls):
         if not cls.scanner:
             return
@@ -59,3 +105,17 @@ class State:
             return
         del cls.vna
         cls.vna = None
+
+    @classmethod
+    def del_generator_1(cls):
+        if not cls.generator_1:
+            return
+        del cls.generator_1
+        cls.generator_1 = None
+
+    @classmethod
+    def del_generator_2(cls):
+        if not cls.generator_2:
+            return
+        del cls.generator_2
+        cls.generator_2 = None

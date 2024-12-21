@@ -31,3 +31,15 @@ class BaseInstrument:
 
     def write(self, cmd: str) -> None:
         return self.adapter.write(cmd)
+
+
+class PrologixMeta(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        host = kwargs.get("host", None)
+        if not host:
+            host = args[0]  # FIXME: improve later
+        if host not in cls._instances:
+            cls._instances[host] = super(PrologixMeta, cls).__call__(*args, **kwargs)
+        return cls._instances[host]

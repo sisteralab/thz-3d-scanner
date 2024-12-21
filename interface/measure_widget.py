@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from interface.ui.Button import Button
 from interface.ui.DoubleSpinBox import DoubleSpinBox
+from interface.ui.Lines import HLine
 from store.state import State
 from utils.functions import steps_to_time, convert_seconds
 
@@ -35,7 +36,20 @@ class MeasureThread(QThread):
     log = Signal(dict)
 
     def __init__(
-        self, x_range, y_range, z_range, vna_power, vna_start, vna_stop, vna_points
+        self,
+        x_range,
+        y_range,
+        z_range,
+        vna_power,
+        vna_start,
+        vna_stop,
+        vna_points,
+        generator_freq_start_1,
+        generator_freq_stop_1,
+        generator_freq_points_1,
+        generator_freq_start_2,
+        generator_freq_stop_2,
+        generator_freq_points_2,
     ):
         super().__init__()
         self.x_range = x_range
@@ -45,6 +59,14 @@ class MeasureThread(QThread):
         self.vna_start = vna_start
         self.vna_stop = vna_stop
         self.vna_points = vna_points
+
+        self.generator_freq_start_1 = generator_freq_start_1
+        self.generator_freq_stop_1 = generator_freq_stop_1
+        self.generator_freq_points_1 = generator_freq_points_1
+
+        self.generator_freq_start_2 = generator_freq_start_2
+        self.generator_freq_stop_2 = generator_freq_stop_2
+        self.generator_freq_points_2 = generator_freq_points_2
 
     def run(self):
         try:
@@ -56,49 +78,70 @@ class MeasureThread(QThread):
             State.vna.set_channel_format("COMP")
             State.vna.set_average_count(10)
             State.vna.set_average_status(False)
-            full_data = {
-                "x": self.x_range.tolist(),
-                "y": self.y_range.tolist(),
-                "z": self.z_range.tolist(),
-                "amplitude": np.zeros((len(self.x_range), len(self.z_range))).tolist(),
-                "vna_data": [],
-            }
-            total_steps = len(self.y_range) * len(self.x_range) * len(self.z_range)
+            freq_points = np.min(
+                [self.generator_freq_points_1, self.generator_freq_points_2]
+            )
+            total_steps = (
+                len(self.y_range) * len(self.x_range) * len(self.z_range) * freq_points
+            )
             step = 0
             start_time = time.time()
-            for step_y, y in enumerate(self.y_range):
-                State.scanner.move_y(y)
-                if not State.measure_running:
-                    break
-                for step_x, x in enumerate(self.x_range):
-                    State.scanner.move_x(x)
+            freq_range_1 = np.linspace(
+                self.generator_freq_start_1, self.generator_freq_stop_1, freq_points
+            )
+            freq_range_2 = np.linspace(
+                self.generator_freq_start_2, self.generator_freq_stop_2, freq_points
+            )
+            for freq_1, freq_2 in zip(freq_range_1, freq_range_2):
+                State.generator_1.set_frequency(freq_1 * 1e9)
+                State.generator_2.set_frequency(freq_2 * 1e9)
+                full_data = {
+                    "x": self.x_range.tolist(),
+                    "y": self.y_range.tolist(),
+                    "z": self.z_range.tolist(),
+                    "amplitude": np.zeros(
+                        (len(self.x_range), len(self.z_range))
+                    ).tolist(),
+                    "vna_data": [],
+                }
+                for step_y, y in enumerate(self.y_range):
+                    State.scanner.move_y(y)
                     if not State.measure_running:
                         break
-                    for step_z, z in enumerate(self.z_range):
-                        State.scanner.move_z(z)
-                        self.msleep(50)
-                        vna_data = State.vna.get_data()
-                        dat = np.mean(vna_data["amplitude"])
-                        self.log.emit({"type": "info", "msg": f"{dat} dB"})
-                        full_data["amplitude"][step_x][step_z] = dat
-                        full_data["vna_data"].append(vna_data)
-                        self.data.emit(full_data)
-                        step += 1
-                        now_time = time.time()
-                        velocity = step / (now_time - start_time)
-                        self.progress.emit(int(round(step * 100 / total_steps)))
-                        self.remaining_time.emit(
-                            f"Approx time ~ {convert_seconds(round((total_steps - step) / velocity))}"
-                        )
+                    for step_x, x in enumerate(self.x_range):
+                        State.scanner.move_x(x)
                         if not State.measure_running:
                             break
+                        for step_z, z in enumerate(self.z_range):
+                            State.scanner.move_z(z)
+                            self.msleep(100)
+                            vna_data = State.vna.get_data()
+                            dat = np.mean(vna_data["amplitude"])
+                            self.log.emit(
+                                {
+                                    "type": "info",
+                                    "msg": f"freq1 {freq_1:.5f}GHz; freq2 {freq_2:.5f}GHz; pow {dat:.5f} dB",
+                                }
+                            )
+                            full_data["amplitude"][step_x][step_z] = dat
+                            full_data["vna_data"].append(vna_data)
+                            self.data.emit(full_data)
+                            step += 1
+                            now_time = time.time()
+                            velocity = step / (now_time - start_time)
+                            self.progress.emit(int(round(step * 100 / total_steps)))
+                            self.remaining_time.emit(
+                                f"Approx time ~ {convert_seconds(round((total_steps - step) / velocity))}"
+                            )
+                            if not State.measure_running:
+                                break
 
-            with open(
-                f"data/meas_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json",
-                "w",
-                encoding="utf-8",
-            ) as f:
-                json.dump(full_data, f, ensure_ascii=False, indent=4)
+                with open(
+                    f"data/meas_{freq_1}_{freq_2}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json",
+                    "w",
+                    encoding="utf-8",
+                ) as f:
+                    json.dump(full_data, f, ensure_ascii=False, indent=4)
 
         except (AttributeError, Exception) as e:
             self.log.emit({"type": "error", "msg": f"{e}"})
@@ -184,6 +227,30 @@ class MeasureWidget(QGroupBox):
         # self.vna_points.setRange(1, 5000)
         # self.vna_points.setValue(100)
 
+        self.generator_freq_start_1 = DoubleSpinBox(self)
+        self.generator_freq_start_1.setRange(1, 290)
+        self.generator_freq_start_1.setDecimals(5)
+
+        self.generator_freq_stop_1 = DoubleSpinBox(self)
+        self.generator_freq_stop_1.setRange(1, 290)
+        self.generator_freq_stop_1.setDecimals(5)
+
+        self.generator_freq_points_1 = QSpinBox(self)
+        self.generator_freq_points_1.setRange(1, 290)
+        self.generator_freq_points_1.valueChanged.connect(self.update_approx_time)
+
+        self.generator_freq_start_2 = DoubleSpinBox(self)
+        self.generator_freq_start_2.setRange(1, 290)
+        self.generator_freq_start_2.setDecimals(5)
+
+        self.generator_freq_stop_2 = DoubleSpinBox(self)
+        self.generator_freq_stop_2.setRange(1, 290)
+        self.generator_freq_stop_2.setDecimals(5)
+
+        self.generator_freq_points_2 = QSpinBox(self)
+        self.generator_freq_points_2.setRange(1, 290)
+        self.generator_freq_points_2.valueChanged.connect(self.update_approx_time)
+
         self.approx_time = QLabel("Approx time ~ None", self)
 
         self.progress_bar = QProgressBar(self)
@@ -225,6 +292,20 @@ class MeasureWidget(QGroupBox):
         # f_layout.addRow("VNA stop time, s", self.vna_stop_time)
         # f_layout.addRow("VNA points", self.vna_points)
 
+        f_layout.addRow(HLine(self))
+
+        f_layout.addRow("Generator start 1, GHz", self.generator_freq_start_1)
+        f_layout.addRow("Generator stop 1, GHz", self.generator_freq_stop_1)
+        f_layout.addRow("Generator points 1", self.generator_freq_points_1)
+
+        f_layout.addRow(HLine(self))
+
+        f_layout.addRow("Generator start 2, GHz", self.generator_freq_start_2)
+        f_layout.addRow("Generator stop 2, GHz", self.generator_freq_stop_2)
+        f_layout.addRow("Generator points 2", self.generator_freq_points_2)
+
+        f_layout.addRow(HLine(self))
+
         f_layout.addRow(self.approx_time)
         f_layout.addRow(self.progress_bar)
 
@@ -249,6 +330,10 @@ class MeasureWidget(QGroupBox):
         self.update_approx_time()
 
     def start_measure(self):
+        if self.generator_freq_points_2.value() != self.generator_freq_points_1.value():
+            logger.warning("Frequency points must be equal!")
+            return
+
         self.measure_thread = MeasureThread(
             x_range=np.linspace(
                 self.x_start.value(), self.x_stop.value(), self.x_points.value()
@@ -263,9 +348,25 @@ class MeasureWidget(QGroupBox):
             vna_start=0,
             vna_stop=0.1,
             vna_points=100,
+            generator_freq_start_1=self.generator_freq_start_1.value(),
+            generator_freq_stop_1=self.generator_freq_stop_1.value(),
+            generator_freq_points_1=self.generator_freq_points_1.value(),
+            generator_freq_start_2=self.generator_freq_start_2.value(),
+            generator_freq_stop_2=self.generator_freq_stop_2.value(),
+            generator_freq_points_2=self.generator_freq_points_2.value(),
         )
 
-        self.measure_thread.data.connect(self.parent().parent().parent().update_plot)
+        self.measure_thread.data.connect(
+            self.parent()
+            .parent()
+            .parent()
+            .parent()
+            .parent()
+            .parent()
+            .parent()
+            .parent()
+            .update_plot
+        )  # FIXME: fix parents later
         self.measure_thread.progress.connect(lambda x: self.progress_bar.setValue(x))
         self.measure_thread.remaining_time.connect(
             lambda x: self.approx_time.setText(x)
@@ -345,7 +446,12 @@ class MeasureWidget(QGroupBox):
         self.z_points.valueChanged.connect(self.update_z_step)
 
     def update_approx_time(self):
-        steps = self.x_points.value() * self.y_points.value() * self.z_points.value()
+        steps = (
+            self.x_points.value()
+            * self.y_points.value()
+            * self.z_points.value()
+            * self.generator_freq_points_1.value()
+        )
         self.approx_time.setText(f"Approx time ~ {steps_to_time(steps)}")
 
     @staticmethod

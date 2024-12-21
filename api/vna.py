@@ -27,7 +27,7 @@ class VNABlock(BaseInstrument):
         host: str = "169.254.106.189",
         port: int = 5025,
     ):
-        self.adapter = SocketAdapter(host=host, port=port, delay=0.05)
+        self.adapter = SocketAdapter(host=host, port=port, delay=0.1)
 
     def idn(self) -> str:
         return self.query("*IDN?")
