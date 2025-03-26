@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QTabWidget, QScrollArea
 
+from interface.data_table import DataTable
 from interface.init_generator_widget import InitGeneratorWidget
 from interface.init_scanner_widget import InitScannerWidget
 from interface.init_vna_widget import InitVnaWidget
@@ -43,9 +44,13 @@ class ManagerWidget(QWidget):
         measure_scroll_area.setWidgetResizable(True)
         measure_scroll_area.setWidget(measure_tab)
 
+        # Create the Data tab
+        data_tab = DataTable()
+
         # Add tabs to the tab widget
         tab_widget.addTab(setup_scroll_area, "Setup")
         tab_widget.addTab(measure_scroll_area, "Measure")
+        tab_widget.addTab(data_tab, "Data")
 
         # Set the tab widget as the main layout
         main_layout = QVBoxLayout(self)

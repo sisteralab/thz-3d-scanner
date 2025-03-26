@@ -1,7 +1,5 @@
-import json
 import logging
 import time
-from datetime import datetime
 
 import numpy as np
 from PySide6.QtCore import QThread, Signal
@@ -17,11 +15,13 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QSpinBox,
     QVBoxLayout,
+    QCheckBox,
 )
 
 from interface.ui.Button import Button
 from interface.ui.DoubleSpinBox import DoubleSpinBox
 from interface.ui.Lines import HLine
+from store.data import MeasureModel
 from store.state import State
 from utils.functions import steps_to_time, convert_seconds
 
@@ -50,6 +50,9 @@ class MeasureThread(QThread):
         generator_freq_start_2,
         generator_freq_stop_2,
         generator_freq_points_2,
+        use_x_sweep=True,
+        use_y_sweep=True,
+        use_z_sweep=True,
     ):
         super().__init__()
         self.x_range = x_range
@@ -59,14 +62,18 @@ class MeasureThread(QThread):
         self.vna_start = vna_start
         self.vna_stop = vna_stop
         self.vna_points = vna_points
-
         self.generator_freq_start_1 = generator_freq_start_1
         self.generator_freq_stop_1 = generator_freq_stop_1
         self.generator_freq_points_1 = generator_freq_points_1
-
         self.generator_freq_start_2 = generator_freq_start_2
         self.generator_freq_stop_2 = generator_freq_stop_2
         self.generator_freq_points_2 = generator_freq_points_2
+        self.use_x_sweep = use_x_sweep
+        self.use_y_sweep = use_y_sweep
+        self.use_z_sweep = use_z_sweep
+
+        self.measure = MeasureModel.objects.create(data={})
+        self.measure.save(False)
 
     def run(self):
         try:
@@ -78,6 +85,7 @@ class MeasureThread(QThread):
             State.vna.set_channel_format("COMP")
             State.vna.set_average_count(10)
             State.vna.set_average_status(False)
+
             freq_points = np.min(
                 [self.generator_freq_points_1, self.generator_freq_points_2]
             )
@@ -86,6 +94,7 @@ class MeasureThread(QThread):
             )
             step = 0
             start_time = time.time()
+
             freq_range_1 = np.linspace(
                 self.generator_freq_start_1, self.generator_freq_stop_1, freq_points
             )
@@ -95,7 +104,10 @@ class MeasureThread(QThread):
             for freq_1, freq_2 in zip(freq_range_1, freq_range_2):
                 State.generator_1.set_frequency(freq_1 * 1e9)
                 State.generator_2.set_frequency(freq_2 * 1e9)
+
                 full_data = {
+                    "freq_1": freq_1,
+                    "freq_2": freq_2,
                     "x": self.x_range.tolist(),
                     "y": self.y_range.tolist(),
                     "z": self.z_range.tolist(),
@@ -104,16 +116,20 @@ class MeasureThread(QThread):
                     ).tolist(),
                     "vna_data": [],
                 }
+
                 for step_y, y in enumerate(self.y_range):
-                    State.scanner.move_y(y)
+                    if self.use_y_sweep:
+                        State.scanner.move_y(y)
                     if not State.measure_running:
                         break
                     for step_x, x in enumerate(self.x_range):
-                        State.scanner.move_x(x)
+                        if self.use_x_sweep:
+                            State.scanner.move_x(x)
                         if not State.measure_running:
                             break
                         for step_z, z in enumerate(self.z_range):
-                            State.scanner.move_z(z)
+                            if self.use_z_sweep:
+                                State.scanner.move_z(z)
                             self.msleep(100)
                             vna_data = State.vna.get_data()
                             dat = np.mean(vna_data["amplitude"])
@@ -136,17 +152,12 @@ class MeasureThread(QThread):
                             if not State.measure_running:
                                 break
 
-                with open(
-                    f"data/meas_{freq_1}_{freq_2}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json",
-                    "w",
-                    encoding="utf-8",
-                ) as f:
-                    json.dump(full_data, f, ensure_ascii=False, indent=4)
+                self.measure.data.append(full_data)
 
         except (AttributeError, Exception) as e:
             self.log.emit({"type": "error", "msg": f"{e}"})
-            self.finished.emit()
 
+        self.measure.save(True)
         self.finished.emit()
 
 
@@ -163,57 +174,67 @@ class MeasureWidget(QGroupBox):
         f_layout = QFormLayout()
         h_layout = QHBoxLayout()
 
+        self.x_check = QCheckBox("X", self)
+        self.x_check.setChecked(State.use_x_sweep)
         self.x_start = DoubleSpinBox(self)
         self.x_start.setRange(-1000, 1000)
-        self.x_start.setValue(-10)
+        self.x_start.setValue(State.x_start)
         self.x_start.valueChanged.connect(self.update_x_step)
         self.x_stop = DoubleSpinBox(self)
         self.x_stop.setRange(-1000, 1000)
-        self.x_stop.setValue(-90)
+        self.x_stop.setValue(State.x_stop)
         self.x_stop.valueChanged.connect(self.update_x_step)
         self.x_points = QSpinBox(self)
         self.x_points.setRange(1, 5000)
-        self.x_points.setValue(4)
+        self.x_points.setValue(State.x_points)
         self.x_points.valueChanged.connect(self.update_x_step)
         self.x_points.valueChanged.connect(self.update_approx_time)
         self.x_step = QDoubleSpinBox(self)
         self.x_step.setRange(0.02, 100)
         self.x_step.setSingleStep(0.0125)
+        self.x_step.setValue(State.x_step)
         self.x_step.valueChanged.connect(self.update_x_points)
 
+        self.y_check = QCheckBox("Y", self)
+        self.y_check.setChecked(State.use_y_sweep)
         self.y_start = DoubleSpinBox(self)
         self.y_start.setRange(-1000, 1000)
-        self.y_start.setValue(-60)
+        self.y_start.setValue(State.y_start)
         self.y_start.valueChanged.connect(self.update_y_step)
         self.y_stop = DoubleSpinBox(self)
         self.y_stop.setRange(-1000, 1000)
-        self.y_stop.setValue(-60)
+        self.y_stop.setValue(State.y_stop)
         self.y_stop.valueChanged.connect(self.update_y_step)
         self.y_points = QSpinBox(self)
         self.y_points.setRange(1, 5000)
+        self.y_points.setValue(State.y_points)
         self.y_points.valueChanged.connect(self.update_y_step)
         self.y_points.valueChanged.connect(self.update_approx_time)
         self.y_step = QDoubleSpinBox(self)
         self.y_step.setRange(0.02, 100)
         self.y_step.setSingleStep(0.0125)
+        self.y_step.setValue(State.y_step)
         self.y_step.valueChanged.connect(self.update_y_points)
 
+        self.z_check = QCheckBox("Z", self)
+        self.z_check.setChecked(State.use_z_sweep)
         self.z_start = DoubleSpinBox(self)
         self.z_start.setRange(-1000, 1000)
-        self.z_start.setValue(70)
+        self.z_start.setValue(State.z_start)
         self.z_start.valueChanged.connect(self.update_z_step)
         self.z_stop = DoubleSpinBox(self)
         self.z_stop.setRange(-1000, 1000)
-        self.z_stop.setValue(90)
+        self.z_stop.setValue(State.z_stop)
         self.z_stop.valueChanged.connect(self.update_z_step)
         self.z_points = QSpinBox(self)
         self.z_points.setRange(1, 5000)
-        self.z_points.setValue(4)
+        self.z_points.setValue(State.z_points)
         self.z_points.valueChanged.connect(self.update_z_step)
         self.z_points.valueChanged.connect(self.update_approx_time)
         self.z_step = QDoubleSpinBox(self)
         self.z_step.setRange(0.02, 100)
         self.z_step.setSingleStep(0.0125)
+        self.z_step.setValue(State.z_step)
         self.z_step.valueChanged.connect(self.update_z_points)
 
         # self.vna_power = DoubleSpinBox(self)
@@ -230,25 +251,31 @@ class MeasureWidget(QGroupBox):
         self.generator_freq_start_1 = DoubleSpinBox(self)
         self.generator_freq_start_1.setRange(1, 290)
         self.generator_freq_start_1.setDecimals(5)
+        self.generator_freq_start_1.setValue(State.generator_freq_start_1)
 
         self.generator_freq_stop_1 = DoubleSpinBox(self)
         self.generator_freq_stop_1.setRange(1, 290)
         self.generator_freq_stop_1.setDecimals(5)
+        self.generator_freq_stop_1.setValue(State.generator_freq_stop_1)
 
         self.generator_freq_points_1 = QSpinBox(self)
         self.generator_freq_points_1.setRange(1, 290)
+        self.generator_freq_points_1.setValue(State.generator_freq_points_1)
         self.generator_freq_points_1.valueChanged.connect(self.update_approx_time)
 
         self.generator_freq_start_2 = DoubleSpinBox(self)
         self.generator_freq_start_2.setRange(1, 290)
         self.generator_freq_start_2.setDecimals(5)
+        self.generator_freq_start_2.setValue(State.generator_freq_start_2)
 
         self.generator_freq_stop_2 = DoubleSpinBox(self)
         self.generator_freq_stop_2.setRange(1, 290)
         self.generator_freq_stop_2.setDecimals(5)
+        self.generator_freq_stop_2.setValue(State.generator_freq_stop_2)
 
         self.generator_freq_points_2 = QSpinBox(self)
         self.generator_freq_points_2.setRange(1, 290)
+        self.generator_freq_points_2.setValue(State.generator_freq_points_2)
         self.generator_freq_points_2.valueChanged.connect(self.update_approx_time)
 
         self.approx_time = QLabel("Approx time ~ None", self)
@@ -269,19 +296,19 @@ class MeasureWidget(QGroupBox):
         g_layout.addWidget(QLabel("Points", self), 0, 3, alignment=Qt.AlignCenter)
         g_layout.addWidget(QLabel("Step", self), 0, 4, alignment=Qt.AlignCenter)
 
-        g_layout.addWidget(QLabel("X", self), 1, 0, alignment=Qt.AlignCenter)
+        g_layout.addWidget(self.x_check, 1, 0, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.x_start, 1, 1, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.x_stop, 1, 2, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.x_points, 1, 3, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.x_step, 1, 4, alignment=Qt.AlignCenter)
 
-        g_layout.addWidget(QLabel("Y", self), 2, 0, alignment=Qt.AlignCenter)
+        g_layout.addWidget(self.y_check, 2, 0, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.y_start, 2, 1, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.y_stop, 2, 2, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.y_points, 2, 3, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.y_step, 2, 4, alignment=Qt.AlignCenter)
 
-        g_layout.addWidget(QLabel("Z", self), 3, 0, alignment=Qt.AlignCenter)
+        g_layout.addWidget(self.z_check, 3, 0, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.z_start, 3, 1, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.z_stop, 3, 2, alignment=Qt.AlignCenter)
         g_layout.addWidget(self.z_points, 3, 3, alignment=Qt.AlignCenter)
@@ -337,13 +364,19 @@ class MeasureWidget(QGroupBox):
         self.measure_thread = MeasureThread(
             x_range=np.linspace(
                 self.x_start.value(), self.x_stop.value(), self.x_points.value()
-            ),
+            )
+            if self.x_check.isChecked()
+            else [0],
             y_range=np.linspace(
                 self.y_start.value(), self.y_stop.value(), self.y_points.value()
-            ),
+            )
+            if self.y_check.isChecked()
+            else [0],
             z_range=np.linspace(
                 self.z_start.value(), self.z_stop.value(), self.z_points.value()
-            ),
+            )
+            if self.z_check.isChecked()
+            else [0],
             vna_power=-90,
             vna_start=0,
             vna_stop=0.1,
@@ -354,6 +387,9 @@ class MeasureWidget(QGroupBox):
             generator_freq_start_2=self.generator_freq_start_2.value(),
             generator_freq_stop_2=self.generator_freq_stop_2.value(),
             generator_freq_points_2=self.generator_freq_points_2.value(),
+            use_x_sweep=self.x_check.isChecked(),
+            use_y_sweep=self.y_check.isChecked(),
+            use_z_sweep=self.z_check.isChecked(),
         )
 
         self.measure_thread.data.connect(
@@ -450,7 +486,12 @@ class MeasureWidget(QGroupBox):
             self.x_points.value()
             * self.y_points.value()
             * self.z_points.value()
-            * self.generator_freq_points_1.value()
+            * np.min(
+                [
+                    self.generator_freq_points_1.value(),
+                    self.generator_freq_points_2.value(),
+                ]
+            )
         )
         self.approx_time.setText(f"Approx time ~ {steps_to_time(steps)}")
 

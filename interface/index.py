@@ -94,4 +94,5 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QtGui.QCloseEvent):
         State.del_scanner()
         State.del_vna()
+        State.store_state()
         event.accept()

@@ -1,3 +1,4 @@
+from PySide6.QtCore import QSettings
 from typing_extensions import Optional
 
 from api.scannerdevice import ScannerDevice
@@ -13,12 +14,99 @@ from utils.exceptions import DeviceConnectionError
 
 
 class State:
+    settings = QSettings("settings.ini", QSettings.IniFormat)
+
     measure_running = False
     monitor_running = False
     scanner: Optional[ScannerDevice] = None
     vna: Optional[VNABlock] = None
     generator_1: Optional[SignalGenerator] = None
     generator_2: Optional[SignalGenerator] = None
+
+    x_start: float = float(settings.value("Measure/x_start", -10))
+    x_stop: float = float(settings.value("Measure/x_stop", -90))
+    x_points: float = float(settings.value("Measure/x_points", 4))
+    x_step: float = float(settings.value("Measure/x_step", 0))
+
+    y_start: float = float(settings.value("Measure/y_start", -10))
+    y_stop: float = float(settings.value("Measure/y_stop", -90))
+    y_points: float = float(settings.value("Measure/y_points", 4))
+    y_step: float = float(settings.value("Measure/y_step", 0))
+
+    z_start: float = float(settings.value("Measure/z_start", -10))
+    z_stop: float = float(settings.value("Measure/z_stop", -90))
+    z_points: float = float(settings.value("Measure/z_points", 4))
+    z_step: float = float(settings.value("Measure/z_step", 0))
+
+    generator_freq_start_1: float = float(
+        settings.value("Measure/generator_freq_start_1", 0)
+    )
+    generator_freq_stop_1: float = float(
+        settings.value("Measure/generator_freq_stop_1", 0)
+    )
+    generator_freq_points_1: float = float(
+        settings.value("Measure/generator_freq_points_1", 1)
+    )
+
+    generator_freq_start_2: float = float(
+        settings.value("Measure/generator_freq_start_2", 0)
+    )
+    generator_freq_stop_2: float = float(
+        settings.value("Measure/generator_freq_stop_2", 0)
+    )
+    generator_freq_points_2: float = float(
+        settings.value("Measure/generator_freq_points_2", 1)
+    )
+
+    use_x_sweep: bool = settings.value("Measure/use_x_sweep", "true") == "true"
+    use_y_sweep: bool = settings.value("Measure/use_y_sweep", "true") == "true"
+    use_z_sweep: bool = settings.value("Measure/use_z_sweep", "true") == "true"
+
+    @classmethod
+    def store_state(cls):
+        cls.settings.setValue("Measure/use_x_sweep", cls.use_x_sweep)
+        cls.settings.setValue("Measure/use_y_sweep", cls.use_y_sweep)
+        cls.settings.setValue("Measure/use_z_sweep", cls.use_z_sweep)
+
+        cls.settings.setValue("Measure/x_start", cls.x_start)
+        cls.settings.setValue("Measure/x_stop", cls.x_stop)
+        cls.settings.setValue("Measure/x_points", cls.x_points)
+        cls.settings.setValue("Measure/x_points", cls.x_points)
+        cls.settings.setValue("Measure/x_step", cls.x_step)
+
+        cls.settings.setValue("Measure/y_start", cls.y_start)
+        cls.settings.setValue("Measure/y_stop", cls.y_stop)
+        cls.settings.setValue("Measure/y_points", cls.y_points)
+        cls.settings.setValue("Measure/y_points", cls.y_points)
+        cls.settings.setValue("Measure/y_step", cls.y_step)
+
+        cls.settings.setValue("Measure/z_start", cls.z_start)
+        cls.settings.setValue("Measure/z_stop", cls.z_stop)
+        cls.settings.setValue("Measure/z_points", cls.z_points)
+        cls.settings.setValue("Measure/z_points", cls.z_points)
+        cls.settings.setValue("Measure/z_step", cls.z_step)
+
+        cls.settings.setValue(
+            "Measure/generator_freq_start_1", cls.generator_freq_start_1
+        )
+        cls.settings.setValue(
+            "Measure/generator_freq_stop_1", cls.generator_freq_stop_1
+        )
+        cls.settings.setValue(
+            "Measure/generator_freq_points_1", cls.generator_freq_points_1
+        )
+
+        cls.settings.setValue(
+            "Measure/generator_freq_start_2", cls.generator_freq_start_2
+        )
+        cls.settings.setValue(
+            "Measure/generator_freq_stop_2", cls.generator_freq_stop_2
+        )
+        cls.settings.setValue(
+            "Measure/generator_freq_points_2", cls.generator_freq_points_2
+        )
+
+        cls.settings.sync()
 
     @classmethod
     def init_scanner(cls) -> bool:
