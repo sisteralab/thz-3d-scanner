@@ -1,7 +1,7 @@
 numpy==1.24.4
 pyopengl==3.1.7
 pyopengl-accelerate==3.1.7
-pyqtgraph==0.12.4
+pyqtgraph==0.13.3
 pyside6==6.6.3.1
 pyside6-addons==6.6.3.1
 pyside6-essentials==6.6.3.1
