@@ -4,12 +4,6 @@ from typing import Optional
 from api.scannerdevice import ScannerDevice
 from api.signal_generator import SignalGenerator
 from api.vna import VNABlock
-from store.config import (
-    VnaConfig,
-    ScannerConfig,
-    SignalGeneratorConfig1,
-    SignalGeneratorConfig2,
-)
 from utils.exceptions import DeviceConnectionError
 
 
@@ -71,9 +65,24 @@ class State:
     z_movement_delay: int = int(settings.value("Measure/z_movement_delay", 200))
     no_movement_delay: int = int(settings.value("Measure/no_movement_delay", 50))
 
+    # Scanner device configuration
     scanner_x_port: str = settings.value("Scanner/x_port", "COM5")
     scanner_y_port: str = settings.value("Scanner/y_port", "COM6")
     scanner_z_port: str = settings.value("Scanner/z_port", "COM7")
+
+    # VNA device configuration
+    vna_host: str = settings.value("VNA/host", "169.254.106.189")
+    vna_port: int = int(settings.value("VNA/port", 5025))
+
+    # Signal Generator 1 configuration
+    generator_1_host: str = settings.value("Generator1/host", "169.254.156.103")
+    generator_1_port: int = int(settings.value("Generator1/port", 1234))
+    generator_1_gpib: int = int(settings.value("Generator1/gpib", 19))
+
+    # Signal Generator 2 configuration
+    generator_2_host: str = settings.value("Generator2/host", "169.254.156.103")
+    generator_2_port: int = int(settings.value("Generator2/port", 1234))
+    generator_2_gpib: int = int(settings.value("Generator2/gpib", 18))
 
     @classmethod
     def store_state(cls):
@@ -86,6 +95,22 @@ class State:
         cls.settings.setValue("Measure/y_movement_delay", cls.y_movement_delay)
         cls.settings.setValue("Measure/z_movement_delay", cls.z_movement_delay)
         cls.settings.setValue("Measure/no_movement_delay", cls.no_movement_delay)
+
+        # Store device configurations
+        cls.settings.setValue("Scanner/x_port", cls.scanner_x_port)
+        cls.settings.setValue("Scanner/y_port", cls.scanner_y_port)
+        cls.settings.setValue("Scanner/z_port", cls.scanner_z_port)
+
+        cls.settings.setValue("VNA/host", cls.vna_host)
+        cls.settings.setValue("VNA/port", cls.vna_port)
+
+        cls.settings.setValue("Generator1/host", cls.generator_1_host)
+        cls.settings.setValue("Generator1/port", cls.generator_1_port)
+        cls.settings.setValue("Generator1/gpib", cls.generator_1_gpib)
+
+        cls.settings.setValue("Generator2/host", cls.generator_2_host)
+        cls.settings.setValue("Generator2/port", cls.generator_2_port)
+        cls.settings.setValue("Generator2/gpib", cls.generator_2_gpib)
 
         cls.settings.setValue("Measure/x_start", cls.x_start)
         cls.settings.setValue("Measure/x_stop", cls.x_stop)
@@ -131,9 +156,9 @@ class State:
     def init_scanner(cls) -> bool:
         cls.del_scanner()
         cls.scanner = ScannerDevice(
-            x_port=ScannerConfig.AXIS_X_PORT,
-            y_port=ScannerConfig.AXIS_Y_PORT,
-            z_port=ScannerConfig.AXIS_Z_PORT,
+            x_port=cls.scanner_x_port,
+            y_port=cls.scanner_y_port,
+            z_port=cls.scanner_z_port,
         )
         status = cls.scanner.connect_devices()
         if not status:
@@ -147,8 +172,8 @@ class State:
         try:
             cls.del_vna()
             cls.vna = VNABlock(
-                host=VnaConfig.HOST,
-                port=VnaConfig.PORT,
+                host=cls.vna_host,
+                port=cls.vna_port,
             )
         except DeviceConnectionError:
             cls.vna = None
@@ -165,9 +190,9 @@ class State:
         try:
             cls.del_generator_1()
             cls.generator_1 = SignalGenerator(
-                host=SignalGeneratorConfig1.HOST,
-                port=SignalGeneratorConfig1.PORT,
-                gpib=SignalGeneratorConfig1.GPIB,
+                host=cls.generator_1_host,
+                port=cls.generator_1_port,
+                gpib=cls.generator_1_gpib,
             )
         except DeviceConnectionError:
             cls.generator_1 = None
@@ -184,9 +209,9 @@ class State:
         try:
             cls.del_generator_2()
             cls.generator_2 = SignalGenerator(
-                host=SignalGeneratorConfig2.HOST,
-                port=SignalGeneratorConfig2.PORT,
-                gpib=SignalGeneratorConfig2.GPIB,
+                host=cls.generator_2_host,
+                port=cls.generator_2_port,
+                gpib=cls.generator_2_gpib,
             )
         except DeviceConnectionError:
             cls.generator_2 = None

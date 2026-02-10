@@ -2,7 +2,6 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
 
 from interface.ui.Button import Button
-from store.config import ScannerConfig
 from store.state import State
 
 
@@ -20,11 +19,11 @@ class InitScannerWidget(QtWidgets.QGroupBox):
         self.z_port_label = QtWidgets.QLabel("Z port", self)
 
         self.x_port = QtWidgets.QLineEdit(self)
-        self.x_port.setText(ScannerConfig.AXIS_X_PORT)
+        self.x_port.setText(State.scanner_x_port)
         self.y_port = QtWidgets.QLineEdit(self)
-        self.y_port.setText(ScannerConfig.AXIS_Y_PORT)
+        self.y_port.setText(State.scanner_y_port)
         self.z_port = QtWidgets.QLineEdit(self)
-        self.z_port.setText(ScannerConfig.AXIS_Z_PORT)
+        self.z_port.setText(State.scanner_z_port)
 
         ports_layout.addWidget(self.x_port_label, 0, 0, alignment=Qt.AlignCenter)
         ports_layout.addWidget(self.y_port_label, 0, 1, alignment=Qt.AlignCenter)
@@ -44,11 +43,14 @@ class InitScannerWidget(QtWidgets.QGroupBox):
         self.setLayout(layout)
 
     def initialize(self):
-        ScannerConfig.AXIS_X_PORT = self.x_port.text()
-        ScannerConfig.AXIS_Y_PORT = self.y_port.text()
-        ScannerConfig.AXIS_Z_PORT = self.z_port.text()
+        # Update state with new port configurations
+        State.scanner_x_port = self.x_port.text()
+        State.scanner_y_port = self.y_port.text()
+        State.scanner_z_port = self.z_port.text()
+
         status = State.init_scanner()
         if status:
             self.init_status.setText("Initialized Successfully")
+            State.store_state()  # Save the new configuration
         else:
             self.init_status.setText("Connection Error!")

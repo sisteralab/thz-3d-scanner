@@ -2,7 +2,6 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import QThread, Signal
 
 from interface.ui.Button import Button
-from store.config import VnaConfig
 from store.state import State
 
 
@@ -25,10 +24,10 @@ class InitVnaWidget(QtWidgets.QGroupBox):
         form_layout = QtWidgets.QFormLayout()
 
         self.host = QtWidgets.QLineEdit(self)
-        self.host.setText(VnaConfig.HOST)
+        self.host.setText(State.vna_host)
         self.port = QtWidgets.QSpinBox(self)
         self.port.setRange(1, 500000)
-        self.port.setValue(VnaConfig.PORT)
+        self.port.setValue(State.vna_port)
 
         form_layout.addRow("Host", self.host)
         form_layout.addRow("Port", self.port)
@@ -44,8 +43,10 @@ class InitVnaWidget(QtWidgets.QGroupBox):
         self.setLayout(layout)
 
     def initialize(self):
-        VnaConfig.HOST = self.host.text()
-        VnaConfig.PORT = self.port.value()
+        # Update state with new VNA configuration
+        State.vna_host = self.host.text()
+        State.vna_port = self.port.value()
+
         self.initialize_thread = InitializeThread()
 
         self.initialize_thread.finished.connect(lambda: self.btn_init.set_enabled(True))
@@ -57,5 +58,6 @@ class InitVnaWidget(QtWidgets.QGroupBox):
     def set_status(self, status: bool):
         if status:
             self.init_status.setText("Initialized Successfully")
+            State.store_state()  # Save the new configuration
         else:
             self.init_status.setText("Connection Error!")
