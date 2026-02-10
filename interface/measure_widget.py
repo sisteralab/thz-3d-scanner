@@ -72,7 +72,7 @@ class MeasureThread(QThread):
         self.use_y_sweep = use_y_sweep
         self.use_z_sweep = use_z_sweep
 
-        self.measure = MeasureModel.objects.create(data={})
+        self.measure = MeasureModel.objects.create(data=[])
         self.measure.save(False)
 
     def run(self):
@@ -114,6 +114,7 @@ class MeasureThread(QThread):
                     "amplitude": np.zeros(
                         (len(self.x_range), len(self.z_range))
                     ).tolist(),
+                    "phase": np.zeros((len(self.x_range), len(self.z_range))).tolist(),
                     "vna_data": [],
                 }
 
@@ -130,16 +131,20 @@ class MeasureThread(QThread):
                         for step_z, z in enumerate(self.z_range):
                             if self.use_z_sweep:
                                 State.scanner.move_z(z)
-                            self.msleep(100)
+                            self.msleep(200)
+                            m_s_time = time.time()
                             vna_data = State.vna.get_data()
+                            print(f"Meas time {time.time() - m_s_time} s")
                             dat = np.mean(vna_data["amplitude"])
+                            phase = np.mean(vna_data["phase"])
                             self.log.emit(
                                 {
                                     "type": "info",
-                                    "msg": f"freq1 {freq_1:.5f}GHz; freq2 {freq_2:.5f}GHz; pow {dat:.5f} dB",
+                                    "msg": f"freq1 {freq_1:.5f}GHz; freq2 {freq_2:.5f}GHz; pow {dat:.5f} dB; phase {phase:.2f}",
                                 }
                             )
                             full_data["amplitude"][step_x][step_z] = dat
+                            full_data["phase"][step_x][step_z] = phase
                             full_data["vna_data"].append(vna_data)
                             self.data.emit(full_data)
                             step += 1
@@ -361,23 +366,47 @@ class MeasureWidget(QGroupBox):
             logger.warning("Frequency points must be equal!")
             return
 
+        State.generator_freq_start_1 = self.generator_freq_start_1.value()
+        State.generator_freq_stop_1 = self.generator_freq_stop_1.value()
+        State.generator_freq_points_1 = self.generator_freq_points_1.value()
+        State.generator_freq_start_2 = self.generator_freq_start_2.value()
+        State.generator_freq_stop_2 = self.generator_freq_stop_2.value()
+        State.generator_freq_points_2 = self.generator_freq_points_2.value()
+
+        State.use_x_sweep = self.x_check.isChecked()
+        State.use_y_sweep = self.y_check.isChecked()
+        State.use_z_sweep = self.z_check.isChecked()
+
+        State.x_start = self.x_start.value()
+        State.x_stop = self.x_stop.value()
+        State.x_points = self.x_points.value()
+        State.x_step = self.x_step.value()
+        State.y_start = self.y_start.value()
+        State.y_stop = self.y_stop.value()
+        State.y_points = self.y_points.value()
+        State.y_step = self.y_step.value()
+        State.z_start = self.z_start.value()
+        State.z_stop = self.z_stop.value()
+        State.z_points = self.z_points.value()
+        State.z_step = self.z_step.value()
+
         self.measure_thread = MeasureThread(
             x_range=np.linspace(
                 self.x_start.value(), self.x_stop.value(), self.x_points.value()
             )
             if self.x_check.isChecked()
-            else [0],
+            else np.array([0]),
             y_range=np.linspace(
                 self.y_start.value(), self.y_stop.value(), self.y_points.value()
             )
             if self.y_check.isChecked()
-            else [0],
+            else np.array([0]),
             z_range=np.linspace(
                 self.z_start.value(), self.z_stop.value(), self.z_points.value()
             )
             if self.z_check.isChecked()
-            else [0],
-            vna_power=-90,
+            else np.array([0]),
+            vna_power=-30,
             vna_start=0,
             vna_stop=0.1,
             vna_points=100,

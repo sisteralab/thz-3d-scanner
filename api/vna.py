@@ -3,7 +3,7 @@ import time
 from typing import Dict
 
 import numpy as np
-from typing_extensions import Literal
+from typing import Literal
 
 from api.adapters.socket_adapter import SocketAdapter
 from utils.classes import BaseInstrument
@@ -140,6 +140,7 @@ class VNABlock(BaseInstrument):
                     "amplitude": list(
                         20 * np.log10(np.abs([r + i * 1j for r, i in zip(real, imag)]))
                     ),
+                    "phase": list(np.angle([r + i * 1j for r, i in zip(real, imag)])),
                     # "frequency": self.get_cw_frequency(),
                     # "parameter": param,
                     # "power": power,

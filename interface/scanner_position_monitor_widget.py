@@ -3,7 +3,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import QGridLayout, QGroupBox, QHBoxLayout, QLabel, QVBoxLayout
-from typing_extensions import Literal
+from typing import Literal
 
 from interface.ui.Button import Button
 from interface.ui.DoubleSpinBox import DoubleSpinBox

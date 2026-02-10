@@ -1,5 +1,5 @@
 from PySide6.QtCore import QSettings
-from typing_extensions import Optional
+from typing import Optional
 
 from api.scannerdevice import ScannerDevice
 from api.signal_generator import SignalGenerator
@@ -61,6 +61,10 @@ class State:
     use_x_sweep: bool = settings.value("Measure/use_x_sweep", "true") == "true"
     use_y_sweep: bool = settings.value("Measure/use_y_sweep", "true") == "true"
     use_z_sweep: bool = settings.value("Measure/use_z_sweep", "true") == "true"
+
+    scanner_x_port: str = settings.value("Scanner/x_port", "COM5")
+    scanner_y_port: str = settings.value("Scanner/y_port", "COM6")
+    scanner_z_port: str = settings.value("Scanner/z_port", "COM7")
 
     @classmethod
     def store_state(cls):
