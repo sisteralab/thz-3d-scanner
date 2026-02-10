@@ -48,7 +48,7 @@ class HoverImageItem(pg.ImageItem):
 
             # Update plot title with hover information (similar to example format)
             self.plot_item.setTitle(
-                f"X: {x_world:.1f} mm, Z: {y_world:.1f} mm, Value: {value:.2f} dB"
+                f"X: {x_world:.1f} mm, Z: {y_world:.1f} mm, Value: {value:.2f}"
             )
         else:
             # Clear title when mouse is outside valid data area
@@ -118,7 +118,7 @@ class SimplePyQtGraphWidget(QWidget):
         x_data = np.array(self.current_data["x"])
         z_data = np.array(self.current_data["z"])
 
-        self.image_item.setImage(amplitude)
+        self.image_item.setImage(amplitude, autoLevels=False, autoRange=False)
 
         x_step = x_data[1] - x_data[0] if len(x_data) > 1 else 1
         z_step = z_data[1] - z_data[0] if len(z_data) > 1 else 1
@@ -132,6 +132,94 @@ class SimplePyQtGraphWidget(QWidget):
         if amplitude.size > 0:
             min_val = np.min(amplitude)
             max_val = np.max(amplitude)
+            self.hist_item.setLevels(min_val, max_val)
+
+    def update_data(self, data):
+        """Update the data and refresh visualization"""
+        self.current_data = data
+        self.update_visualization()
+
+
+class PhasePyQtGraphWidget(QWidget):
+    """Widget for phase visualization with same functionality as amplitude widget"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Create main layout
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(5)
+
+        # Create GraphicsLayoutWidget
+        self.graphics_layout = pg.GraphicsLayoutWidget()
+        self.graphics_layout.setBackground("w")
+        self.graphics_layout.setMinimumHeight(400)
+
+        # Add histogram for color control on the left side (column 0)
+        self.hist_item = pg.HistogramLUTItem(orientation="vertical")
+        self.hist_item.setMaximumWidth(150)
+        self.graphics_layout.addItem(self.hist_item, row=0, col=0, rowspan=1)
+
+        # Use a custom gradient for phase data (blue to red)
+        self.hist_item.gradient.setColorMap(
+            pg.ColorMap([0, 1], [(0, 0, 255), (255, 0, 0)])
+        )
+
+        # Move to column 1 for the main plot
+        self.graphics_layout.nextColumn()
+
+        # Create the main plot
+        self.plot_item = self.graphics_layout.addPlot(
+            title="Phase Color Map (X-Z Plane)"
+        )
+        self.plot_item.setLabel("bottom", "X Position", units="mm")
+        self.plot_item.setLabel("left", "Z Position", units="mm")
+        self.plot_item.showGrid(x=True, y=True, alpha=0.3)
+
+        # Create custom image item with hover functionality
+        self.image_item = HoverImageItem()
+        self.image_item.setPlotItem(self.plot_item)
+        self.plot_item.addItem(self.image_item)
+
+        # Set thermal colormap using ColorMap object
+        cmap = pg.ColorMap([0, 1], [(0, 0, 255), (255, 0, 0)])  # Blue to red for phase
+        self.image_item.setColorMap(cmap)
+
+        # Connect histogram to image item
+        self.hist_item.setImageItem(self.image_item)
+
+        # Add to main layout
+        main_layout.addWidget(self.graphics_layout, stretch=1)
+
+        self.setLayout(main_layout)
+
+        # Store data for updates
+        self.current_data = None
+
+    def update_visualization(self):
+        """Update the visualization with current data"""
+        if self.current_data is None:
+            return
+
+        phase = np.array(self.current_data["phase"])
+        x_data = np.array(self.current_data["x"])
+        z_data = np.array(self.current_data["z"])
+
+        self.image_item.setImage(phase, autoLevels=False, autoRange=False)
+
+        x_step = x_data[1] - x_data[0] if len(x_data) > 1 else 1
+        z_step = z_data[1] - z_data[0] if len(z_data) > 1 else 1
+
+        tr = QtGui.QTransform()
+        tr.translate(x_data[0], z_data[0])
+        tr.scale(x_step, z_step)
+        self.image_item.setTransform(tr)
+
+        # Auto scale color range
+        if phase.size > 0:
+            min_val = np.min(phase)
+            max_val = np.max(phase)
             self.hist_item.setLevels(min_val, max_val)
 
     def update_data(self, data):
@@ -154,12 +242,20 @@ class MainWindow(QMainWindow):
 
         self.manager_widget = ManagerWidget(self)
 
-        # Create simple pyqtgraph widget
-        self.plot_widget = SimplePyQtGraphWidget()
+        # Create amplitude pyqtgraph widget
+        self.amplitude_widget = SimplePyQtGraphWidget()
+
+        # Create phase pyqtgraph widget
+        self.phase_widget = PhasePyQtGraphWidget()
 
         self.log_widget = LogWidget(self)
 
-        left_layout.addWidget(self.plot_widget)
+        # Create a horizontal layout for both plots
+        plots_layout = QHBoxLayout()
+        plots_layout.addWidget(self.amplitude_widget, stretch=1)
+        plots_layout.addWidget(self.phase_widget, stretch=1)
+
+        left_layout.addLayout(plots_layout)
         left_layout.addWidget(self.log_widget)
 
         self.layout.addLayout(
@@ -191,6 +287,13 @@ class MainWindow(QMainWindow):
                     [-2, -1, 0, 1],
                     [-2, -1, 0, 1],
                 ],
+                "phase": [
+                    [0, 45, 90, 135],
+                    [180, 225, 270, 315],
+                    [360, 405, 450, 495],
+                    [540, 585, 630, 675],
+                    [720, 765, 810, 855],
+                ],
                 "x": [-20, -10, 10, 20, 30],
                 "z": [-20, -10, 10, 20],
             }
@@ -198,7 +301,8 @@ class MainWindow(QMainWindow):
 
     def update_plot(self, data):
         """Update the visualization with new measurement data"""
-        self.plot_widget.update_data(data)
+        self.amplitude_widget.update_data(data)
+        self.phase_widget.update_data(data)
 
     def closeEvent(self, event: QtGui.QCloseEvent):
         State.del_scanner()
