@@ -3,17 +3,7 @@ import logging
 import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtGui
-from PySide6.QtWidgets import (
-    QHBoxLayout,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QComboBox,
-    QDoubleSpinBox,
-    QLabel,
-    QHBoxLayout,
-    QPushButton,
-)
+from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QWidget, QVBoxLayout
 
 from interface.log import LogHandler, LogWidget
 from interface.manager_widget import ManagerWidget
@@ -25,45 +15,48 @@ class HoverImageItem(pg.ImageItem):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.hover_text = pg.TextItem("", color=(255, 255, 255), anchor=(0.5, 1))
-        self.hover_text.setZValue(100)
-        self.hover_text.hide()
+        self.plot_item = None
 
     def setParentItem(self, parent):
         super().setParentItem(parent)
         if parent is not None:
             parent.scene().sigMouseMoved.connect(self.mouse_moved)
-            parent.addItem(self.hover_text)
+
+    def setPlotItem(self, plot_item):
+        self.plot_item = plot_item
 
     def mouse_moved(self, pos):
-        if self.image is None:
+        if self.image is None or self.plot_item is None:
             return
 
-        # Convert scene position to image coordinates
+        # Convert scene position to image coordinates (similar to example)
         pos = self.mapFromScene(pos)
-        if not self.boundingRect().contains(pos):
-            self.hover_text.hide()
-            return
 
         # Get image coordinates
         img_pos = self.mapFromItem(self, pos)
         x = int(img_pos.x())
         y = int(img_pos.y())
 
-        # Check if coordinates are within image bounds
-        if 0 <= x < self.image.shape[1] and 0 <= y < self.image.shape[0]:
-            value = self.image[y, x]
+        # Check if coordinates are within image bounds (similar to example)
+        if 0 <= x < self.image.shape[0] and 0 <= y < self.image.shape[1]:
+            value = self.image[x, y]
 
-            # Show hover text
-            self.hover_text.setText(f"X: {x:.1f}, Z: {y:.1f}\nValue: {value:.2f} dB")
-            self.hover_text.setPos(pos.x(), pos.y() - 10)
-            self.hover_text.show()
+            # Get real world coordinates
+            scene_pos = self.mapToParent(pos)
+            x_world = scene_pos.x()
+            y_world = scene_pos.y()
+
+            # Update plot title with hover information (similar to example format)
+            self.plot_item.setTitle(
+                f"X: {x_world:.1f} mm, Z: {y_world:.1f} mm, Value: {value:.2f} dB"
+            )
         else:
-            self.hover_text.hide()
+            # Clear title when mouse is outside valid data area
+            self.plot_item.setTitle("Amplitude Color Map (X-Z Plane)")
 
 
-class InteractivePyQtGraphWidget(QWidget):
-    """Widget for interactive pyqtgraph visualization with controls"""
+class SimplePyQtGraphWidget(QWidget):
+    """Simple widget for pyqtgraph visualization with hover info"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,7 +66,7 @@ class InteractivePyQtGraphWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(5)
 
-        # Create GraphicsLayoutWidget for better layout control
+        # Create GraphicsLayoutWidget
         self.graphics_layout = pg.GraphicsLayoutWidget()
         self.graphics_layout.setBackground("w")
         self.graphics_layout.setMinimumHeight(400)
@@ -82,6 +75,9 @@ class InteractivePyQtGraphWidget(QWidget):
         self.hist_item = pg.HistogramLUTItem(orientation="vertical")
         self.hist_item.setMaximumWidth(150)
         self.graphics_layout.addItem(self.hist_item, row=0, col=0, rowspan=1)
+
+        # Use inferno colormap as requested
+        self.hist_item.gradient.loadPreset("inferno")
 
         # Move to column 1 for the main plot
         self.graphics_layout.nextColumn()
@@ -96,127 +92,47 @@ class InteractivePyQtGraphWidget(QWidget):
 
         # Create custom image item with hover functionality
         self.image_item = HoverImageItem()
+        self.image_item.setPlotItem(self.plot_item)
         self.plot_item.addItem(self.image_item)
 
-        # Set default colormap
-        self.colormap = pg.colormap.get("viridis")
-        self.image_item.setColorMap(self.colormap)
+        # Set inferno colormap
+        self.image_item.setColorMap(pg.colormap.get("inferno"))
 
         # Connect histogram to image item
         self.hist_item.setImageItem(self.image_item)
-        self.hist_item.gradient.loadPreset("viridis")
-
-        # Create controls layout
-        controls_layout = QHBoxLayout()
-
-        # Colormap selection - using only built-in colormaps
-        self.colormap_combo = QComboBox()
-        self.colormap_combo.addItems(["viridis", "plasma", "inferno", "magma", "turbo"])
-        self.colormap_combo.setCurrentText("viridis")
-        self.colormap_combo.currentTextChanged.connect(self.change_colormap)
-
-        # Color range controls
-        self.min_spin = QDoubleSpinBox()
-        self.min_spin.setRange(-100, 100)
-        self.min_spin.setValue(-1)
-        self.min_spin.setPrefix("Min: ")
-        self.min_spin.setSingleStep(0.1)
-        self.min_spin.valueChanged.connect(self.update_color_range)
-
-        self.max_spin = QDoubleSpinBox()
-        self.max_spin.setRange(-100, 100)
-        self.max_spin.setValue(0)
-        self.max_spin.setPrefix("Max: ")
-        self.max_spin.setSingleStep(0.1)
-        self.max_spin.valueChanged.connect(self.update_color_range)
-
-        self.auto_scale_btn = QPushButton("Auto Scale")
-        self.auto_scale_btn.clicked.connect(self.auto_scale)
-
-        # Add controls to layout
-        controls_layout.addWidget(QLabel("Colormap:"))
-        controls_layout.addWidget(self.colormap_combo)
-        controls_layout.addStretch()
-        controls_layout.addWidget(self.min_spin)
-        controls_layout.addWidget(self.max_spin)
-        controls_layout.addWidget(self.auto_scale_btn)
-
-        # Create controls widget
-        controls_widget = QWidget()
-        controls_widget.setLayout(controls_layout)
-        controls_widget.setMaximumHeight(50)
 
         # Add to main layout
-        main_layout.addWidget(controls_widget)
         main_layout.addWidget(self.graphics_layout, stretch=1)
 
         self.setLayout(main_layout)
 
         # Store data for updates
         self.current_data = None
-        self.first_update = True
-
-    def change_colormap(self, colormap_name):
-        """Change the colormap"""
-        self.colormap = pg.colormap.get(colormap_name)
-        self.image_item.setColorMap(self.colormap)
-        self.hist_item.gradient.loadPreset(colormap_name)
-
-    def update_color_range(self):
-        """Update the color range manually"""
-        min_val = self.min_spin.value()
-        max_val = self.max_spin.value()
-        self.hist_item.setLevels(min_val, max_val)
-
-    def auto_scale(self):
-        """Auto scale the color range based on current data"""
-        if hasattr(self.image_item, "image") and self.image_item.image is not None:
-            data = self.image_item.image
-            if data is not None and data.size > 0:
-                min_val = np.min(data)
-                max_val = np.max(data)
-
-                # Update spin boxes
-                self.min_spin.blockSignals(True)
-                self.max_spin.blockSignals(True)
-                self.min_spin.setValue(min_val)
-                self.max_spin.setValue(max_val)
-                self.min_spin.blockSignals(False)
-                self.max_spin.blockSignals(False)
-
-                # Update color range
-                self.update_color_range()
 
     def update_visualization(self):
         """Update the visualization with current data"""
         if self.current_data is None:
             return
 
+        amplitude = np.array(self.current_data["amplitude"])
         x_data = np.array(self.current_data["x"])
         z_data = np.array(self.current_data["z"])
-        amplitude = np.array(self.current_data["amplitude"])
 
-        # Data comes as [x_points][z_points] from measurement cycle (X first, then Z)
-        # For pyqtgraph ImageItem, we need [rows][columns] where rows = y-axis (Z), columns = x-axis (X)
-        # So the data is already in correct format: [x_points][z_points] = [columns][rows]
-        # No transposition needed!
-
-        # Set image data
         self.image_item.setImage(amplitude)
 
-        # Set up proper transform for axis scaling
         x_step = x_data[1] - x_data[0] if len(x_data) > 1 else 1
         z_step = z_data[1] - z_data[0] if len(z_data) > 1 else 1
 
         tr = QtGui.QTransform()
-        tr.translate(x_data[0] - x_step / 2, z_data[0] - z_step / 2)
+        tr.translate(x_data[0], z_data[0])
         tr.scale(x_step, z_step)
         self.image_item.setTransform(tr)
 
-        # Auto scale color range for first update
-        if self.first_update:
-            self.auto_scale()
-            self.first_update = False
+        # Auto scale color range
+        if amplitude.size > 0:
+            min_val = np.min(amplitude)
+            max_val = np.max(amplitude)
+            self.hist_item.setLevels(min_val, max_val)
 
     def update_data(self, data):
         """Update the data and refresh visualization"""
@@ -238,8 +154,8 @@ class MainWindow(QMainWindow):
 
         self.manager_widget = ManagerWidget(self)
 
-        # Create interactive pyqtgraph widget
-        self.plot_widget = InteractivePyQtGraphWidget()
+        # Create simple pyqtgraph widget
+        self.plot_widget = SimplePyQtGraphWidget()
 
         self.log_widget = LogWidget(self)
 
@@ -269,12 +185,13 @@ class MainWindow(QMainWindow):
         self.update_plot(
             {
                 "amplitude": [
-                    [-1, 0, 0, -1],
-                    [-1, 0, 0, -1],
-                    [-1, 0, 0, -1],
-                    [-1, 0, 0, -1],
+                    [-2, -1, 0, 1],
+                    [-2, -1, 0, 1],
+                    [-2, -1, 0, 1],
+                    [-2, -1, 0, 1],
+                    [-2, -1, 0, 1],
                 ],
-                "x": [-20, -10, 10, 20],
+                "x": [-20, -10, 10, 20, 30],
                 "z": [-20, -10, 10, 20],
             }
         )
