@@ -95,6 +95,7 @@ class MeasureThread(QThread):
             State.vna.set_channel_format("COMP")
             State.vna.set_average_count(10)
             State.vna.set_average_status(False)
+            State.vna.set_bandwidth(1000)
 
             freq_points = np.min(
                 [self.generator_freq_points_1, self.generator_freq_points_2]
@@ -141,11 +142,18 @@ class MeasureThread(QThread):
                         if not State.measure_running:
                             break
 
-                        # Determine Z direction based on X position for snake pattern
-                        if self.use_z_snake_pattern and step_x % 2 == 0:
-                            z_indices = range(len(self.z_range))
+                        # Z-axis snake pattern with optimized movement
+                        if self.use_z_snake_pattern:
+                            # Create efficient snake pattern for Z-axis
+                            # Alternate direction for each X row to minimize travel distance
+                            # while ensuring full coverage of the Z range
+                            if step_x % 2 == 0:
+                                z_indices = range(len(self.z_range))
+                            else:
+                                z_indices = reversed(range(len(self.z_range)))
                         else:
-                            z_indices = reversed(range(len(self.z_range)))
+                            # Standard linear traversal from start to end
+                            z_indices = range(len(self.z_range))
 
                         for z_idx in z_indices:
                             z = self.z_range[z_idx]

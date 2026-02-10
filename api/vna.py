@@ -115,6 +115,12 @@ class VNABlock(BaseInstrument):
         lst_params = [_ for _ in lst[1::2]]
         return dict(zip(lst_traces, lst_params))
 
+    def set_bandwidth(self, value: int, channel: int = 1) -> None:
+        self.write(f"SENSe{channel}:BANDwidth:RESolution {value}")
+
+    def get_bandwidth(self, channel: int = 1) -> int:
+        return int(self.query(f"SENSe{channel}:BANDwidth:RESolution?"))
+
     def get_data(self) -> Dict:
         """
         Method to get data from VNA
