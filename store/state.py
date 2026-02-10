@@ -61,6 +61,15 @@ class State:
     use_x_sweep: bool = settings.value("Measure/use_x_sweep", "true") == "true"
     use_y_sweep: bool = settings.value("Measure/use_y_sweep", "true") == "true"
     use_z_sweep: bool = settings.value("Measure/use_z_sweep", "true") == "true"
+    use_z_snake_pattern: bool = (
+        settings.value("Measure/use_z_snake_pattern", "true") == "true"
+    )
+
+    # Movement delays in milliseconds
+    x_movement_delay: int = int(settings.value("Measure/x_movement_delay", 100))
+    y_movement_delay: int = int(settings.value("Measure/y_movement_delay", 150))
+    z_movement_delay: int = int(settings.value("Measure/z_movement_delay", 200))
+    no_movement_delay: int = int(settings.value("Measure/no_movement_delay", 50))
 
     scanner_x_port: str = settings.value("Scanner/x_port", "COM5")
     scanner_y_port: str = settings.value("Scanner/y_port", "COM6")
@@ -71,6 +80,12 @@ class State:
         cls.settings.setValue("Measure/use_x_sweep", cls.use_x_sweep)
         cls.settings.setValue("Measure/use_y_sweep", cls.use_y_sweep)
         cls.settings.setValue("Measure/use_z_sweep", cls.use_z_sweep)
+        cls.settings.setValue("Measure/use_z_snake_pattern", cls.use_z_snake_pattern)
+
+        cls.settings.setValue("Measure/x_movement_delay", cls.x_movement_delay)
+        cls.settings.setValue("Measure/y_movement_delay", cls.y_movement_delay)
+        cls.settings.setValue("Measure/z_movement_delay", cls.z_movement_delay)
+        cls.settings.setValue("Measure/no_movement_delay", cls.no_movement_delay)
 
         cls.settings.setValue("Measure/x_start", cls.x_start)
         cls.settings.setValue("Measure/x_stop", cls.x_stop)

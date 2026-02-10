@@ -13,7 +13,9 @@ class ManagerWidget(QWidget):
     def __init__(self, parent):
         super().__init__(parent)
 
-        self.setMaximumWidth(400)
+        # Remove fixed width constraint to allow adaptive sizing
+        # self.setMaximumWidth(400)
+        self.setMinimumWidth(300)  # Set reasonable minimum width
 
         # Create a tab widget
         tab_widget = QTabWidget(self)

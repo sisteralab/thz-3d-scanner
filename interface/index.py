@@ -55,8 +55,12 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.plot_widget)
         left_layout.addWidget(self.log_widget)
 
-        self.layout.addLayout(left_layout)
-        self.layout.addWidget(self.manager_widget)
+        self.layout.addLayout(
+            left_layout, stretch=2
+        )  # Give more space to plot/log area
+        self.layout.addWidget(
+            self.manager_widget, stretch=1
+        )  # Give reasonable space to manager
 
         self.update_plot(
             {

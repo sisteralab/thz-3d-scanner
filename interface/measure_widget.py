@@ -53,6 +53,11 @@ class MeasureThread(QThread):
         use_x_sweep=True,
         use_y_sweep=True,
         use_z_sweep=True,
+        use_z_snake_pattern=True,
+        x_movement_delay=100,
+        y_movement_delay=150,
+        z_movement_delay=200,
+        no_movement_delay=50,
     ):
         super().__init__()
         self.x_range = x_range
@@ -71,6 +76,11 @@ class MeasureThread(QThread):
         self.use_x_sweep = use_x_sweep
         self.use_y_sweep = use_y_sweep
         self.use_z_sweep = use_z_sweep
+        self.use_z_snake_pattern = use_z_snake_pattern
+        self.x_movement_delay = x_movement_delay
+        self.y_movement_delay = y_movement_delay
+        self.z_movement_delay = z_movement_delay
+        self.no_movement_delay = no_movement_delay
 
         self.measure = MeasureModel.objects.create(data=[])
         self.measure.save(False)
@@ -121,17 +131,29 @@ class MeasureThread(QThread):
                 for step_y, y in enumerate(self.y_range):
                     if self.use_y_sweep:
                         State.scanner.move_y(y)
+                        self.msleep(self.y_movement_delay)
                     if not State.measure_running:
                         break
                     for step_x, x in enumerate(self.x_range):
                         if self.use_x_sweep:
                             State.scanner.move_x(x)
+                            self.msleep(self.x_movement_delay)
                         if not State.measure_running:
                             break
-                        for step_z, z in enumerate(self.z_range):
+
+                        # Determine Z direction based on X position for snake pattern
+                        if self.use_z_snake_pattern and step_x % 2 == 0:
+                            z_indices = range(len(self.z_range))
+                        else:
+                            z_indices = reversed(range(len(self.z_range)))
+
+                        for z_idx in z_indices:
+                            z = self.z_range[z_idx]
                             if self.use_z_sweep:
                                 State.scanner.move_z(z)
-                            self.msleep(200)
+                                self.msleep(self.z_movement_delay)
+                            else:
+                                self.msleep(self.no_movement_delay)
                             m_s_time = time.time()
                             vna_data = State.vna.get_data()
                             print(f"Meas time {time.time() - m_s_time} s")
@@ -143,8 +165,9 @@ class MeasureThread(QThread):
                                     "msg": f"freq1 {freq_1:.5f}GHz; freq2 {freq_2:.5f}GHz; pow {dat:.5f} dB; phase {phase:.2f}",
                                 }
                             )
-                            full_data["amplitude"][step_x][step_z] = dat
-                            full_data["phase"][step_x][step_z] = phase
+                            # Store data in correct position regardless of traversal order
+                            full_data["amplitude"][step_x][z_idx] = dat
+                            full_data["phase"][step_x][z_idx] = phase
                             full_data["vna_data"].append(vna_data)
                             self.data.emit(full_data)
                             step += 1
@@ -242,6 +265,12 @@ class MeasureWidget(QGroupBox):
         self.z_step.setValue(State.z_step)
         self.z_step.valueChanged.connect(self.update_z_points)
 
+        self.z_snake_check = QCheckBox("Z Snake", self)
+        self.z_snake_check.setChecked(State.use_z_snake_pattern)
+        self.z_snake_check.setToolTip(
+            "Enable snake pattern for Z-axis movement to reduce travel time"
+        )
+
         # self.vna_power = DoubleSpinBox(self)
         # self.vna_power.setRange(-90, 8)
         # self.vna_power.setValue(-90)
@@ -295,29 +324,42 @@ class MeasureWidget(QGroupBox):
         self.btn_stop_measure.clicked.connect(self.stop_measure)
         self.btn_stop_measure.set_enabled(False)
 
-        g_layout.addWidget(QLabel("Axis", self), 0, 0, alignment=Qt.AlignCenter)
-        g_layout.addWidget(QLabel("Start", self), 0, 1, alignment=Qt.AlignCenter)
-        g_layout.addWidget(QLabel("Stop", self), 0, 2, alignment=Qt.AlignCenter)
-        g_layout.addWidget(QLabel("Points", self), 0, 3, alignment=Qt.AlignCenter)
-        g_layout.addWidget(QLabel("Step", self), 0, 4, alignment=Qt.AlignCenter)
+        g_layout.addWidget(
+            QLabel("Axis", self), 0, 0, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+        g_layout.addWidget(
+            QLabel("Start", self), 0, 1, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+        g_layout.addWidget(
+            QLabel("Stop", self), 0, 2, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+        g_layout.addWidget(
+            QLabel("Points", self), 0, 3, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+        g_layout.addWidget(
+            QLabel("Step", self), 0, 4, alignment=Qt.AlignmentFlag.AlignLeft
+        )
 
-        g_layout.addWidget(self.x_check, 1, 0, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.x_start, 1, 1, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.x_stop, 1, 2, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.x_points, 1, 3, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.x_step, 1, 4, alignment=Qt.AlignCenter)
+        g_layout.addWidget(self.x_check, 1, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.x_start, 1, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.x_stop, 1, 2, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.x_points, 1, 3, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.x_step, 1, 4, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        g_layout.addWidget(self.y_check, 2, 0, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.y_start, 2, 1, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.y_stop, 2, 2, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.y_points, 2, 3, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.y_step, 2, 4, alignment=Qt.AlignCenter)
+        g_layout.addWidget(self.y_check, 2, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.y_start, 2, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.y_stop, 2, 2, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.y_points, 2, 3, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.y_step, 2, 4, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        g_layout.addWidget(self.z_check, 3, 0, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.z_start, 3, 1, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.z_stop, 3, 2, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.z_points, 3, 3, alignment=Qt.AlignCenter)
-        g_layout.addWidget(self.z_step, 3, 4, alignment=Qt.AlignCenter)
+        g_layout.addWidget(self.z_check, 3, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.z_start, 3, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.z_stop, 3, 2, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.z_points, 3, 3, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(self.z_step, 3, 4, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(
+            self.z_snake_check, 4, 0, alignment=Qt.AlignmentFlag.AlignLeft
+        )
 
         # f_layout.addRow("VNA power, dBm", self.vna_power)
         # f_layout.addRow("VNA start time, s", self.vna_start_time)
@@ -376,6 +418,7 @@ class MeasureWidget(QGroupBox):
         State.use_x_sweep = self.x_check.isChecked()
         State.use_y_sweep = self.y_check.isChecked()
         State.use_z_sweep = self.z_check.isChecked()
+        State.use_z_snake_pattern = self.z_snake_check.isChecked()
 
         State.x_start = self.x_start.value()
         State.x_stop = self.x_stop.value()
@@ -419,6 +462,11 @@ class MeasureWidget(QGroupBox):
             use_x_sweep=self.x_check.isChecked(),
             use_y_sweep=self.y_check.isChecked(),
             use_z_sweep=self.z_check.isChecked(),
+            use_z_snake_pattern=self.z_snake_check.isChecked(),
+            x_movement_delay=State.x_movement_delay,
+            y_movement_delay=State.y_movement_delay,
+            z_movement_delay=State.z_movement_delay,
+            no_movement_delay=State.no_movement_delay,
         )
 
         self.measure_thread.data.connect(
