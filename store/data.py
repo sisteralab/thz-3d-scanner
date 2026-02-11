@@ -124,6 +124,7 @@ class MeasureModel:
         self,
         data: Dict,
         finished: Any = "--",
+        comment: str = "",
     ):
         self.data = data
         self.objects.latest_id += 1
@@ -131,7 +132,7 @@ class MeasureModel:
         self.started = datetime.now()
         self.finished = finished
         self.saved = False
-        self.comment = ""
+        self.comment = comment
 
     def get_attr_by_ind(self, ind: int):
         attr = self.ind_attr_map.get(ind)
