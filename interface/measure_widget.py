@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
     QCheckBox,
+    QLineEdit,
 )
 
 from interface.ui.Button import Button
@@ -47,6 +48,7 @@ class MeasureThread(QThread):
         generator_freq_start_1,
         generator_freq_stop_1,
         generator_freq_points_1,
+        generator_amps_1,
         generator_freq_start_2,
         generator_freq_stop_2,
         generator_freq_points_2,
@@ -70,6 +72,7 @@ class MeasureThread(QThread):
         self.generator_freq_start_1 = generator_freq_start_1
         self.generator_freq_stop_1 = generator_freq_stop_1
         self.generator_freq_points_1 = generator_freq_points_1
+        self.generator_amps_1 = generator_amps_1
         self.generator_freq_start_2 = generator_freq_start_2
         self.generator_freq_stop_2 = generator_freq_stop_2
         self.generator_freq_points_2 = generator_freq_points_2
@@ -100,6 +103,17 @@ class MeasureThread(QThread):
             freq_points = np.min(
                 [self.generator_freq_points_1, self.generator_freq_points_2]
             )
+            if type(self.generator_amps_1) == list:
+                if len(self.generator_amps_1) >= freq_points:
+                    self.generator_amps_1 = self.generator_amps_1[:freq_points]
+                elif len(self.generator_amps_1) >= 1:
+                    diff = freq_points - len(self.generator_amps_1)
+                    self.generator_amps_1.extend(
+                        [self.generator_amps_1[-1] for _ in range(diff)]
+                    )
+                else:
+                    self.generator_amps_1 = [None for _ in range(freq_points)]
+
             total_steps = (
                 len(self.y_range) * len(self.x_range) * len(self.z_range) * freq_points
             )
@@ -112,12 +126,20 @@ class MeasureThread(QThread):
             freq_range_2 = np.linspace(
                 self.generator_freq_start_2, self.generator_freq_stop_2, freq_points
             )
-            for freq_1, freq_2 in zip(freq_range_1, freq_range_2):
+            for freq_1, amp_1, freq_2 in zip(
+                freq_range_1, self.generator_amps_1, freq_range_2
+            ):
+                print(f"AMP 1: {amp_1}")
+                if amp_1 is not None:
+                    State.generator_1.set_power(-100)
                 State.generator_1.set_frequency(freq_1 * 1e9)
+                if amp_1 is not None:
+                    State.generator_1.set_power(amp_1)
                 State.generator_2.set_frequency(freq_2 * 1e9)
 
                 full_data = {
                     "freq_1": freq_1,
+                    "amp_1": amp_1,
                     "freq_2": freq_2,
                     "x": self.x_range.tolist(),
                     "y": self.y_range.tolist(),
@@ -305,6 +327,9 @@ class MeasureWidget(QGroupBox):
         self.generator_freq_points_1.setValue(State.generator_freq_points_1)
         self.generator_freq_points_1.valueChanged.connect(self.update_approx_time)
 
+        self.generator_amps_1 = QLineEdit(self)
+        self.generator_amps_1.setText(State.generator_amps_1)
+
         self.generator_freq_start_2 = DoubleSpinBox(self)
         self.generator_freq_start_2.setRange(1, 290)
         self.generator_freq_start_2.setDecimals(5)
@@ -379,6 +404,7 @@ class MeasureWidget(QGroupBox):
         f_layout.addRow("Generator start 1, GHz", self.generator_freq_start_1)
         f_layout.addRow("Generator stop 1, GHz", self.generator_freq_stop_1)
         f_layout.addRow("Generator points 1", self.generator_freq_points_1)
+        f_layout.addRow("Generator amps 1", self.generator_amps_1)
 
         f_layout.addRow(HLine(self))
 
@@ -419,6 +445,7 @@ class MeasureWidget(QGroupBox):
         State.generator_freq_start_1 = self.generator_freq_start_1.value()
         State.generator_freq_stop_1 = self.generator_freq_stop_1.value()
         State.generator_freq_points_1 = self.generator_freq_points_1.value()
+        State.generator_amps_1 = self.generator_amps_1.text()
         State.generator_freq_start_2 = self.generator_freq_start_2.value()
         State.generator_freq_stop_2 = self.generator_freq_stop_2.value()
         State.generator_freq_points_2 = self.generator_freq_points_2.value()
@@ -440,6 +467,15 @@ class MeasureWidget(QGroupBox):
         State.z_stop = self.z_stop.value()
         State.z_points = self.z_points.value()
         State.z_step = self.z_step.value()
+
+        amps_1 = []
+        raw_amps_1 = self.generator_amps_1.text().replace(" ", "").split(",")
+        for a in raw_amps_1:
+            try:
+                a = float(a)
+                amps_1.append(a)
+            except ValueError:
+                ...
 
         self.measure_thread = MeasureThread(
             x_range=np.linspace(
@@ -464,6 +500,7 @@ class MeasureWidget(QGroupBox):
             generator_freq_start_1=self.generator_freq_start_1.value(),
             generator_freq_stop_1=self.generator_freq_stop_1.value(),
             generator_freq_points_1=self.generator_freq_points_1.value(),
+            generator_amps_1=amps_1,
             generator_freq_start_2=self.generator_freq_start_2.value(),
             generator_freq_stop_2=self.generator_freq_stop_2.value(),
             generator_freq_points_2=self.generator_freq_points_2.value(),

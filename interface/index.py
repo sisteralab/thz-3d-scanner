@@ -13,9 +13,10 @@ from store.state import State
 class HoverImageItem(pg.ImageItem):
     """Custom ImageItem with hover functionality to show values"""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, title="Base", **kwargs):
         super().__init__(*args, **kwargs)
         self.plot_item = None
+        self.title = title
 
     def setParentItem(self, parent):
         super().setParentItem(parent)
@@ -48,18 +49,19 @@ class HoverImageItem(pg.ImageItem):
 
             # Update plot title with hover information (similar to example format)
             self.plot_item.setTitle(
-                f"X: {x_world:.1f} mm, Z: {y_world:.1f} mm, Value: {value:.2f}"
+                f"X: {x_world:.1f} mm, Z: {y_world:.1f} mm, {self.title}: {value:.2f}"
             )
         else:
             # Clear title when mouse is outside valid data area
-            self.plot_item.setTitle("Amplitude Color Map (X-Z Plane)")
+            self.plot_item.setTitle(f"{self.title} Color Map (X-Z Plane)")
 
 
 class SimplePyQtGraphWidget(QWidget):
     """Simple widget for pyqtgraph visualization with hover info"""
 
-    def __init__(self, parent=None):
+    def __init__(self, title="Base", parent=None):
         super().__init__(parent)
+        self.title = title
 
         # Create main layout
         main_layout = QVBoxLayout()
@@ -84,14 +86,14 @@ class SimplePyQtGraphWidget(QWidget):
 
         # Create the main plot
         self.plot_item = self.graphics_layout.addPlot(
-            title="Amplitude Color Map (X-Z Plane)"
+            title=f"{title} Color Map (X-Z Plane)"
         )
         self.plot_item.setLabel("bottom", "X Position", units="mm")
         self.plot_item.setLabel("left", "Z Position", units="mm")
         self.plot_item.showGrid(x=True, y=True, alpha=0.3)
 
         # Create custom image item with hover functionality
-        self.image_item = HoverImageItem()
+        self.image_item = HoverImageItem(title=title)
         self.image_item.setPlotItem(self.plot_item)
         self.plot_item.addItem(self.image_item)
 
@@ -143,8 +145,9 @@ class SimplePyQtGraphWidget(QWidget):
 class PhasePyQtGraphWidget(QWidget):
     """Widget for phase visualization with same functionality as amplitude widget"""
 
-    def __init__(self, parent=None):
+    def __init__(self, title="Base", parent=None):
         super().__init__(parent)
+        self.title = title
 
         # Create main layout
         main_layout = QVBoxLayout()
@@ -171,14 +174,14 @@ class PhasePyQtGraphWidget(QWidget):
 
         # Create the main plot
         self.plot_item = self.graphics_layout.addPlot(
-            title="Phase Color Map (X-Z Plane)"
+            title=f"{title} Color Map (X-Z Plane)"
         )
         self.plot_item.setLabel("bottom", "X Position", units="mm")
         self.plot_item.setLabel("left", "Z Position", units="mm")
         self.plot_item.showGrid(x=True, y=True, alpha=0.3)
 
         # Create custom image item with hover functionality
-        self.image_item = HoverImageItem()
+        self.image_item = HoverImageItem(title=title)
         self.image_item.setPlotItem(self.plot_item)
         self.plot_item.addItem(self.image_item)
 
@@ -243,10 +246,10 @@ class MainWindow(QMainWindow):
         self.manager_widget = ManagerWidget(self)
 
         # Create amplitude pyqtgraph widget
-        self.amplitude_widget = SimplePyQtGraphWidget()
+        self.amplitude_widget = SimplePyQtGraphWidget(title="Amplitude")
 
         # Create phase pyqtgraph widget
-        self.phase_widget = PhasePyQtGraphWidget()
+        self.phase_widget = PhasePyQtGraphWidget(title="Phase")
 
         self.log_widget = LogWidget(self)
 

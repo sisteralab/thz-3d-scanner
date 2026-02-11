@@ -41,6 +41,7 @@ class State:
     generator_freq_points_1: float = float(
         settings.value("Measure/generator_freq_points_1", 1)
     )
+    generator_amps_1: str = str(settings.value("Measure/generator_amps_1", ""))
 
     generator_freq_start_2: float = float(
         settings.value("Measure/generator_freq_start_2", 0)
@@ -139,6 +140,7 @@ class State:
         cls.settings.setValue(
             "Measure/generator_freq_points_1", cls.generator_freq_points_1
         )
+        cls.settings.setValue("Measure/generator_amps_1", cls.generator_amps_1)
 
         cls.settings.setValue(
             "Measure/generator_freq_start_2", cls.generator_freq_start_2
