@@ -15,6 +15,8 @@ from interface.log import LogHandler, LogWidget
 from interface.manager_widget import ManagerWidget
 from interface.plot_widgets import (
     AmplitudePlotWidget,
+    ComplexReferenceController,
+    ComplexReferenceWidget,
     PhasePlotWidget,
 )
 from store.state import State
@@ -33,12 +35,17 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout()
 
         self.manager_widget = ManagerWidget(self)
+        self.reference_controller = ComplexReferenceController(self)
 
         # Create amplitude pyqtgraph widget
-        self.amplitude_widget = AmplitudePlotWidget()
+        self.amplitude_widget = AmplitudePlotWidget(
+            reference_controller=self.reference_controller
+        )
 
         # Create phase pyqtgraph widget
-        self.phase_widget = PhasePlotWidget()
+        self.phase_widget = PhasePlotWidget(reference_controller=self.reference_controller)
+        self.reference_widget = ComplexReferenceWidget(self.reference_controller)
+        self.reference_controller.corrected_data_ready.connect(self._apply_corrected_data)
 
         self.log_widget = LogWidget(self)
 
@@ -47,6 +54,7 @@ class MainWindow(QMainWindow):
         plots_layout.addWidget(self.amplitude_widget, stretch=1)
         plots_layout.addWidget(self.phase_widget, stretch=1)
 
+        left_layout.addWidget(self.reference_widget)
         left_layout.addLayout(plots_layout)
         left_layout.addWidget(self.log_widget)
 
@@ -87,6 +95,10 @@ class MainWindow(QMainWindow):
 
     def update_plot(self, data):
         """Update the visualization with new measurement data"""
+        self.reference_controller.set_raw_data(data)
+
+    def _apply_corrected_data(self, data):
+        """Apply corrected data after complex reference subtraction."""
         self.amplitude_widget.update_data(data)
         self.phase_widget.update_data(data)
 
