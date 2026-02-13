@@ -40,8 +40,20 @@ class ComplexReferenceController(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.raw_data = None
-        self.selected_points = []  # [(x_coord, z_coord), ...]
+        self.selected_points = []  # [(x_idx, z_idx), ...]
+        self.selected_point_set = set()
+        self.selected_points_array = np.empty((0, 2), dtype=int)
         self.collection_enabled = True
+        self.max_scatter_points = 1200
+        self.max_ui_points = 30
+        self.preview_ui_points = 4
+        self.points_version = 0
+
+    def _sync_points_array(self):
+        if self.selected_points:
+            self.selected_points_array = np.asarray(self.selected_points, dtype=int)
+        else:
+            self.selected_points_array = np.empty((0, 2), dtype=int)
 
     def set_raw_data(self, data):
         self.raw_data = data
@@ -57,24 +69,33 @@ class ComplexReferenceController(QObject):
 
         x_idx = int(np.argmin(np.abs(x_axis - x_coord)))
         z_idx = int(np.argmin(np.abs(z_axis - z_coord)))
-        snapped_x = float(x_axis[x_idx])
-        snapped_z = float(z_axis[z_idx])
+        point_key = (x_idx, z_idx)
 
-        for px, pz in self.selected_points:
-            if np.isclose(px, snapped_x) and np.isclose(pz, snapped_z):
-                return
+        if point_key in self.selected_point_set:
+            return
 
-        self.selected_points.append((snapped_x, snapped_z))
+        self.selected_points.append(point_key)
+        self.selected_point_set.add(point_key)
+        self._sync_points_array()
+        self.points_version += 1
         self._emit_updates()
 
     def remove_last_point(self):
         if not self.selected_points:
             return
-        self.selected_points.pop()
+        removed_point = self.selected_points.pop()
+        self.selected_point_set.discard(removed_point)
+        self._sync_points_array()
+        self.points_version += 1
         self._emit_updates()
 
     def clear_points(self):
+        if not self.selected_points:
+            return
         self.selected_points = []
+        self.selected_point_set = set()
+        self._sync_points_array()
+        self.points_version += 1
         self._emit_updates()
 
     def set_collection_enabled(self, enabled):
@@ -91,12 +112,18 @@ class ComplexReferenceController(QObject):
 
     def _build_empty_info(self):
         return {
-            "points": [],
+            "points_preview": [],
+            "points_ui": [],
+            "scatter_x": np.array([], dtype=float),
+            "scatter_z": np.array([], dtype=float),
             "count": 0,
+            "points_version": self.points_version,
+            "render_key": None,
             "reference_real": None,
             "reference_imag": None,
             "reference_amplitude_db": None,
             "reference_phase_rad": None,
+            "points_ui_truncated": False,
         }
 
     @staticmethod
@@ -125,53 +152,93 @@ class ComplexReferenceController(QObject):
         if x_axis.size == 0 or z_axis.size == 0:
             return data, self._build_empty_info()
 
-        complex_map = amplitude_phase_to_complex(amplitude, phase)
-        point_infos = []
-        point_complex_values = []
-
-        for point_x, point_z in self.selected_points:
-            x_idx = int(np.argmin(np.abs(x_axis - point_x)))
-            z_idx = int(np.argmin(np.abs(z_axis - point_z)))
-            value = complex_map[x_idx, z_idx]
-            point_complex_values.append(value)
-            point_infos.append(
-                {
-                    "x": float(x_axis[x_idx]),
-                    "z": float(z_axis[z_idx]),
-                    "x_idx": x_idx,
-                    "z_idx": z_idx,
-                    "real": float(np.real(value)),
-                    "imag": float(np.imag(value)),
-                    "amplitude_db": float(
-                        20 * np.log10(np.clip(np.abs(value), 1e-12, None))
-                    ),
-                    "phase_rad": float(normalize_phase(np.angle(value))),
-                }
-            )
-
-        if point_complex_values:
-            reference_complex = np.mean(np.asarray(point_complex_values, dtype=complex))
-            corrected_complex = complex_map - reference_complex
-            info = {
-                "points": point_infos,
-                "count": len(point_infos),
-                "reference_real": float(np.real(reference_complex)),
-                "reference_imag": float(np.imag(reference_complex)),
-                "reference_amplitude_db": float(
-                    20 * np.log10(np.clip(np.abs(reference_complex), 1e-12, None))
-                ),
-                "reference_phase_rad": float(normalize_phase(np.angle(reference_complex))),
-            }
-        else:
-            corrected_complex = complex_map.copy()
+        if self.selected_points_array.size == 0:
+            corrected_data = dict(data)
             info = self._build_empty_info()
+            return corrected_data, info
 
-        corrected_amplitude, corrected_phase = complex_to_amplitude_phase(
-            corrected_complex
+        valid_mask = (
+            (self.selected_points_array[:, 0] >= 0)
+            & (self.selected_points_array[:, 0] < amplitude.shape[0])
+            & (self.selected_points_array[:, 1] >= 0)
+            & (self.selected_points_array[:, 1] < amplitude.shape[1])
         )
+        valid_points = self.selected_points_array[valid_mask]
+        if valid_points.size == 0:
+            corrected_data = dict(data)
+            info = self._build_empty_info()
+            return corrected_data, info
+
+        complex_map = amplitude_phase_to_complex(amplitude, phase)
+        selected_values = complex_map[valid_points[:, 0], valid_points[:, 1]]
+        reference_complex = np.mean(selected_values)
+
+        corrected_complex = complex_map - reference_complex
+        corrected_amplitude, corrected_phase = complex_to_amplitude_phase(corrected_complex)
         corrected_data = dict(data)
         corrected_data["amplitude"] = corrected_amplitude
         corrected_data["phase"] = corrected_phase
+
+        preview_count = min(self.preview_ui_points, valid_points.shape[0])
+        ui_count = min(self.max_ui_points, valid_points.shape[0])
+        preview_points = valid_points[:preview_count]
+        ui_points = valid_points[:ui_count]
+        preview_values = selected_values[:preview_count]
+        ui_values = selected_values[:ui_count]
+
+        scatter_points = valid_points
+        if valid_points.shape[0] > self.max_scatter_points:
+            stride = int(np.ceil(valid_points.shape[0] / self.max_scatter_points))
+            scatter_points = valid_points[::stride]
+
+        points_preview = []
+        for point, value in zip(preview_points, preview_values):
+            points_preview.append(
+                {
+                    "x": float(x_axis[point[0]]),
+                    "z": float(z_axis[point[1]]),
+                    "real": float(np.real(value)),
+                    "imag": float(np.imag(value)),
+                }
+            )
+
+        points_ui = []
+        for point, value in zip(ui_points, ui_values):
+            points_ui.append(
+                {
+                    "x": float(x_axis[point[0]]),
+                    "z": float(z_axis[point[1]]),
+                    "real": float(np.real(value)),
+                    "imag": float(np.imag(value)),
+                }
+            )
+
+        render_key = (
+            self.points_version,
+            int(x_axis.size),
+            int(z_axis.size),
+            float(x_axis[0]),
+            float(x_axis[-1]),
+            float(z_axis[0]),
+            float(z_axis[-1]),
+        )
+
+        info = {
+            "points_preview": points_preview,
+            "points_ui": points_ui,
+            "points_ui_truncated": valid_points.shape[0] > ui_count,
+            "count": int(valid_points.shape[0]),
+            "points_version": self.points_version,
+            "render_key": render_key,
+            "scatter_x": x_axis[scatter_points[:, 0]],
+            "scatter_z": z_axis[scatter_points[:, 1]],
+            "reference_real": float(np.real(reference_complex)),
+            "reference_imag": float(np.imag(reference_complex)),
+            "reference_amplitude_db": float(
+                20 * np.log10(np.clip(np.abs(reference_complex), 1e-12, None))
+            ),
+            "reference_phase_rad": float(normalize_phase(np.angle(reference_complex))),
+        }
 
         return corrected_data, info
 
@@ -182,6 +249,7 @@ class ComplexReferenceWidget(QWidget):
     def __init__(self, controller: ComplexReferenceController, parent=None):
         super().__init__(parent)
         self.controller = controller
+        self._last_render_key = None
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -226,28 +294,8 @@ class ComplexReferenceWidget(QWidget):
         self.controller.selection_changed.connect(self.update_from_selection)
 
     def update_from_selection(self, info):
-        points = info.get("points", [])
-        if points:
-            preview = []
-            for point in points[:4]:
-                preview.append(f"({point['x']:.2f},{point['z']:.2f})")
-            tail = f" +{len(points) - 4}" if len(points) > 4 else ""
-            self.points_label.setText(
-                f"P[{len(points)}]: " + ", ".join(preview) + tail
-            )
-
-            tooltip_lines = []
-            for idx, point in enumerate(points, start=1):
-                tooltip_lines.append(
-                    f"{idx}) X={point['x']:.3f}, Z={point['z']:.3f}, "
-                    f"C={point['real']:.4e}{point['imag']:+.4e}j"
-                )
-            self.points_label.setToolTip("\n".join(tooltip_lines))
-        else:
-            self.points_label.setText("P[0]: none")
-            self.points_label.setToolTip("")
-
-        if info.get("count", 0):
+        count = int(info.get("count", 0))
+        if count:
             self.summary_label.setText(
                 "Ref(mean): "
                 f"{info['reference_real']:.4e}{info['reference_imag']:+.4e}j "
@@ -256,6 +304,36 @@ class ComplexReferenceWidget(QWidget):
             )
         else:
             self.summary_label.setText("Ref: none")
+
+        render_key = info.get("render_key")
+        if render_key == self._last_render_key:
+            return
+        self._last_render_key = render_key
+
+        preview_points = info.get("points_preview", [])
+        if preview_points:
+            preview = []
+            for point in preview_points:
+                preview.append(f"({point['x']:.2f},{point['z']:.2f})")
+            tail = f" +{count - len(preview_points)}" if count > len(preview_points) else ""
+            self.points_label.setText(f"P[{count}]: " + ", ".join(preview) + tail)
+        else:
+            self.points_label.setText("P[0]: none")
+
+        ui_points = info.get("points_ui", [])
+        if not ui_points:
+            self.points_label.setToolTip("")
+            return
+
+        tooltip_lines = []
+        for idx, point in enumerate(ui_points, start=1):
+            tooltip_lines.append(
+                f"{idx}) X={point['x']:.3f}, Z={point['z']:.3f}, "
+                f"C={point['real']:.4e}{point['imag']:+.4e}j"
+            )
+        if info.get("points_ui_truncated", False):
+            tooltip_lines.append("... truncated ...")
+        self.points_label.setToolTip("\n".join(tooltip_lines))
 
 
 class BasePlotWidget(QWidget):
@@ -341,6 +419,7 @@ class BasePlotWidget(QWidget):
         self.display_data = None
         self.x_axis = np.array([])
         self.z_axis = np.array([])
+        self._last_markers_render_key = None
 
         self.roi.sigRegionChanged.connect(self.update_roi_plot)
         self.plot_item.scene().sigMouseMoved.connect(self.mouse_moved)
@@ -434,13 +513,18 @@ class BasePlotWidget(QWidget):
         mouse_event.accept()
 
     def update_reference_points(self, info):
-        points = info.get("points", [])
-        if not points:
-            self.reference_points_scatter.setData([])
+        render_key = info.get("render_key")
+        if render_key == self._last_markers_render_key:
+            return
+        self._last_markers_render_key = render_key
+
+        scatter_x = np.asarray(info.get("scatter_x", []), dtype=float)
+        scatter_z = np.asarray(info.get("scatter_z", []), dtype=float)
+        if scatter_x.size == 0 or scatter_z.size == 0:
+            self.reference_points_scatter.clear()
             return
 
-        spots = [{"pos": (point["x"], point["z"])} for point in points]
-        self.reference_points_scatter.setData(spots)
+        self.reference_points_scatter.setData(x=scatter_x, y=scatter_z)
 
     def update_visualization(self):
         if self.current_data is None:
