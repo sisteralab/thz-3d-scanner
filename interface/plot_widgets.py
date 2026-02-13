@@ -58,8 +58,8 @@ class HoverImageItem(pg.ImageItem):
         y = int(img_pos.y())
 
         # Check if coordinates are within image bounds (similar to example)
-        if 0 <= x < self.image.shape[1] and 0 <= y < self.image.shape[0]:
-            value = self.image[y, x]
+        if 0 <= x < self.image.shape[0] and 0 <= y < self.image.shape[1]:
+            value = self.image[x, y]
 
             # Get real world coordinates
             scene_pos = self.mapToParent(pos)
@@ -128,14 +128,39 @@ class BasePlotWidget(QWidget):
         # Connect histogram to image item
         self.hist_item.setImageItem(self.image_item)
 
+        # Add ROI for region selection
+        self.roi = pg.ROI([0, 0], [10, 2], pen=(0, 9))
+        self.roi.addScaleHandle([0.5, 1], [0.5, 0.5])
+        self.roi.addScaleHandle([0, 0.5], [0.5, 0.5])
+        self.plot_item.addItem(self.roi)
+        self.roi.setZValue(10)  # make sure ROI is drawn above image
+
+        # Create plot for ROI data below main plot
+        self.roi_plot_item = pg.plot(
+            title="ROI Data",
+            colspan=2,
+        )
+        self.roi_plot_item.setBackground("w")
+        self.roi_plot_item.setMinimumHeight(150)
+        self.roi_plot_item.setMaximumHeight(250)
+        self.roi_plot_item.setLabel("bottom", "Position", units="mm")
+        self.roi_plot_item.setLabel("left", "Value")
+        self.roi_plot_item.showGrid(x=True, y=True, alpha=0.3)
+
         # Add to main layout
         main_layout.addWidget(self.graphics_layout, stretch=1)
+        main_layout.addWidget(self.roi_plot_item, stretch=1)
 
         self.setLayout(main_layout)
 
         # Store data for updates
         self.current_data = None
         self.data_key = data_key
+        self.title = title
+        self.roi_data_curve = None
+
+        # Connect ROI change signal
+        self.roi.sigRegionChanged.connect(self.update_roi_plot)
 
     def update_visualization(self):
         """Update the visualization with current data"""
@@ -161,10 +186,57 @@ class BasePlotWidget(QWidget):
         self.image_item.setTransform(tr)
 
         # Auto scale color range
-        if data.size > 0:
-            min_val = np.min(data)
-            max_val = np.max(data)
-            self.hist_item.setLevels(min_val, max_val)
+        # if data.size > 0:
+        #     min_val = np.min(data)
+        #     max_val = np.max(data)
+        #     self.hist_item.setLevels(min_val, max_val)
+
+        # Update ROI plot with initial data
+        self.update_roi_plot()
+
+    def update_roi_plot(self):
+        """Update the ROI plot with data from the selected region"""
+        if self.current_data is None:
+            return
+
+        data = np.array(self.current_data[self.data_key])
+
+        # Normalize phase data if this is a phase widget
+        if self.data_key == "phase":
+            data = normalize_phase(data)
+
+        # Get ROI region data
+        try:
+            roi_data = self.roi.getArrayRegion(data, self.image_item)
+
+            # Calculate mean along the X-axis (vertical direction)
+            if roi_data.size > 0:
+                mean_data = np.mean(roi_data, axis=1)
+
+                # Create x positions for the ROI data
+                roi_pos = self.roi.pos()
+                roi_size = self.roi.size()
+
+                # Calculate the x positions based on ROI position and size
+                x_start = roi_pos.x()
+                x_end = x_start + roi_size.x()
+                num_points = mean_data.shape[0]
+                x_positions = np.linspace(x_start, x_end, num_points)
+
+                # Update or create the ROI data curve
+                if self.roi_data_curve is None:
+                    self.roi_data_curve = self.roi_plot_item.plot(
+                        x_positions, mean_data, pen=pg.mkPen("r", width=2), clear=True
+                    )
+                else:
+                    self.roi_data_curve.setData(x_positions, mean_data)
+
+                # Set appropriate labels and title
+                self.roi_plot_item.setTitle(f"{self.title} ROI Cross-Section")
+                self.roi_plot_item.setLabel("left", self.title)
+
+        except Exception as e:
+            print(f"Error updating ROI plot: {e}")
 
     def update_data(self, data):
         """Update the data and refresh visualization"""
@@ -183,6 +255,9 @@ class AmplitudePlotWidget(BasePlotWidget):
 
 class PhasePlotWidget(BasePlotWidget):
     """Widget for phase visualization"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent, title="Phase", data_key="phase", colormap_name="phase")
 
     def __init__(self, parent=None):
         super().__init__(parent, title="Phase", data_key="phase", colormap_name="phase")

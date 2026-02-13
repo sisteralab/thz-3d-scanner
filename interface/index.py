@@ -1,5 +1,7 @@
 import logging
 
+import numpy as np
+import pyqtgraph as pg
 from PySide6 import QtGui
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -22,7 +24,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Scanner 3D")
-        self.setGeometry(100, 100, 1200, 600)
+        self.setGeometry(100, 100, 1500, 600)
 
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
@@ -68,24 +70,18 @@ class MainWindow(QMainWindow):
         logger.addHandler(stream_handler)
 
         # Initialize with default data
+
+        data = np.random.normal(size=(200, 100))
+        data[20:80, 20:80] += 2.0
+        data = pg.gaussianFilter(data, (3, 3))
+        data += np.random.normal(size=(200, 100)) * 0.1
+
         self.update_plot(
             {
-                "amplitude": [
-                    [-2, -1, 0, 1],
-                    [-2, -1, 0, 1],
-                    [-2, -1, 0, 1],
-                    [-2, -1, 0, 1],
-                    [-2, -1, 0, 1],
-                ],
-                "phase": [
-                    [0, 45, 90, 135],
-                    [180, 225, 270, 315],
-                    [360, 405, 450, 495],
-                    [540, 585, 630, 675],
-                    [720, 765, 810, 855],
-                ],
-                "x": [-20, -10, 10, 20, 30],
-                "z": [-20, -10, 10, 20],
+                "amplitude": data,
+                "phase": data,
+                "x": np.linspace(-10, 10, 200),
+                "z": np.linspace(-5, 5, 100),
             }
         )
 
