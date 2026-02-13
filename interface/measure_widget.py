@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 class MeasureThread(QThread):
     data = Signal(dict)
+    final_data = Signal(list)
     progress = Signal(int)
     remaining_time = Signal(str)
     log = Signal(dict)
@@ -126,6 +127,7 @@ class MeasureThread(QThread):
             freq_range_2 = np.linspace(
                 self.generator_freq_start_2, self.generator_freq_stop_2, freq_points
             )
+            stop_requested = False
             for freq_1, amp_1, freq_2 in zip(
                 freq_range_1, self.generator_amps_1, freq_range_2
             ):
@@ -150,18 +152,31 @@ class MeasureThread(QThread):
                     "phase": np.zeros((len(self.x_range), len(self.z_range))).tolist(),
                     "vna_data": [],
                 }
+                preview_data = {
+                    "freq_1": freq_1,
+                    "amp_1": amp_1,
+                    "freq_2": freq_2,
+                    "x": full_data["x"],
+                    "y": full_data["y"],
+                    "z": full_data["z"],
+                    "amplitude": full_data["amplitude"],
+                    "phase": full_data["phase"],
+                }
+                freq_has_data = False
 
                 for step_y, y in enumerate(self.y_range):
                     if self.use_y_sweep:
                         State.scanner.move_y(y)
                         self.msleep(self.y_movement_delay)
                     if not State.measure_running:
+                        stop_requested = True
                         break
                     for step_x, x in enumerate(self.x_range):
                         if self.use_x_sweep:
                             State.scanner.move_x(x)
                             self.msleep(self.x_movement_delay)
                         if not State.measure_running:
+                            stop_requested = True
                             break
 
                         # Z-axis snake pattern with optimized movement
@@ -199,7 +214,9 @@ class MeasureThread(QThread):
                             full_data["amplitude"][step_x][z_idx] = dat
                             full_data["phase"][step_x][z_idx] = phase
                             full_data["vna_data"].append(vna_data)
-                            self.data.emit(full_data)
+                            freq_has_data = True
+                            # Emit only lightweight data needed by live plots.
+                            self.data.emit(preview_data)
                             step += 1
                             now_time = time.time()
                             velocity = step / (now_time - start_time)
@@ -208,13 +225,22 @@ class MeasureThread(QThread):
                                 f"Approx time ~ {convert_seconds(round((total_steps - step) / velocity))}"
                             )
                             if not State.measure_running:
+                                stop_requested = True
                                 break
+                        if stop_requested:
+                            break
+                    if stop_requested:
+                        break
 
-                self.measure.data.append(full_data)
+                if freq_has_data:
+                    self.measure.data.append(full_data)
+                if stop_requested:
+                    break
 
         except (AttributeError, Exception) as e:
             self.log.emit({"type": "error", "msg": f"{e}"})
 
+        self.final_data.emit(self.measure.data)
         self.measure.save(True)
         self.finished.emit()
 
