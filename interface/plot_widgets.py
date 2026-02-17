@@ -110,6 +110,13 @@ class ComplexReferenceController(QObject):
         self.selection_changed.emit(info)
         self.corrected_data_ready.emit(corrected_data)
 
+    @staticmethod
+    def _strip_heavy_fields(data):
+        if not isinstance(data, dict):
+            return {}
+        # Keep full metadata for UI, but never pass heavy raw traces through live update signal.
+        return {key: value for key, value in data.items() if key != "vna_data"}
+
     def _build_empty_info(self):
         return {
             "points_preview": [],
@@ -143,48 +150,66 @@ class ComplexReferenceController(QObject):
         return x_axis, z_axis
 
     def _build_corrected_data(self, data):
-        amplitude = np.asarray(data.get("amplitude", []), dtype=float)
-        phase = np.asarray(data.get("phase", []), dtype=float)
-        if amplitude.ndim != 2 or phase.shape != amplitude.shape:
-            return data, self._build_empty_info()
-
-        x_axis, z_axis = self._get_axes(data)
-        if x_axis.size == 0 or z_axis.size == 0:
-            return data, self._build_empty_info()
-
         if self.selected_points_array.size == 0:
-            corrected_data = dict(data)
-            info = self._build_empty_info()
-            return corrected_data, info
+            return self._strip_heavy_fields(data), self._build_empty_info()
+
+        real_map = np.asarray(data.get("complex_real", []), dtype=np.float32)
+        imag_map = np.asarray(data.get("complex_imag", []), dtype=np.float32)
+
+        if real_map.ndim != 2 or imag_map.shape != real_map.shape:
+            amplitude = np.asarray(data.get("amplitude", []), dtype=np.float32)
+            phase = np.asarray(data.get("phase", []), dtype=np.float32)
+            if amplitude.ndim != 2 or phase.shape != amplitude.shape:
+                return self._strip_heavy_fields(data), self._build_empty_info()
+
+            # Backward-compatible fallback for old datasets without complex maps.
+            amp_linear = np.exp(amplitude * np.float32(np.log(10.0) / 20.0))
+            real_map = amp_linear * np.cos(phase)
+            imag_map = amp_linear * np.sin(phase)
+
+        rows, cols = real_map.shape
+        x_axis = np.asarray(data.get("x", np.arange(rows)), dtype=float)
+        z_axis = np.asarray(data.get("z", np.arange(cols)), dtype=float)
+        if x_axis.size != rows:
+            x_axis = np.arange(rows, dtype=float)
+        if z_axis.size != cols:
+            z_axis = np.arange(cols, dtype=float)
 
         valid_mask = (
             (self.selected_points_array[:, 0] >= 0)
-            & (self.selected_points_array[:, 0] < amplitude.shape[0])
+            & (self.selected_points_array[:, 0] < rows)
             & (self.selected_points_array[:, 1] >= 0)
-            & (self.selected_points_array[:, 1] < amplitude.shape[1])
+            & (self.selected_points_array[:, 1] < cols)
         )
         valid_points = self.selected_points_array[valid_mask]
         if valid_points.size == 0:
-            corrected_data = dict(data)
-            info = self._build_empty_info()
-            return corrected_data, info
+            return self._strip_heavy_fields(data), self._build_empty_info()
 
-        complex_map = amplitude_phase_to_complex(amplitude, phase)
-        selected_values = complex_map[valid_points[:, 0], valid_points[:, 1]]
-        reference_complex = np.mean(selected_values)
+        selected_real = real_map[valid_points[:, 0], valid_points[:, 1]]
+        selected_imag = imag_map[valid_points[:, 0], valid_points[:, 1]]
+        reference_real = float(np.mean(selected_real, dtype=np.float64))
+        reference_imag = float(np.mean(selected_imag, dtype=np.float64))
 
-        corrected_complex = complex_map - reference_complex
-        corrected_amplitude, corrected_phase = complex_to_amplitude_phase(corrected_complex)
-        corrected_data = dict(data)
+        corrected_real = real_map - reference_real
+        corrected_imag = imag_map - reference_imag
+        corrected_amplitude = 20 * np.log10(
+            np.clip(np.hypot(corrected_real, corrected_imag), 1e-12, None)
+        )
+        corrected_phase = np.arctan2(corrected_imag, corrected_real)
+        corrected_data = self._strip_heavy_fields(data)
         corrected_data["amplitude"] = corrected_amplitude
         corrected_data["phase"] = corrected_phase
+        corrected_data["complex_real"] = corrected_real
+        corrected_data["complex_imag"] = corrected_imag
 
         preview_count = min(self.preview_ui_points, valid_points.shape[0])
         ui_count = min(self.max_ui_points, valid_points.shape[0])
         preview_points = valid_points[:preview_count]
         ui_points = valid_points[:ui_count]
-        preview_values = selected_values[:preview_count]
-        ui_values = selected_values[:ui_count]
+        preview_real = selected_real[:preview_count]
+        preview_imag = selected_imag[:preview_count]
+        ui_real = selected_real[:ui_count]
+        ui_imag = selected_imag[:ui_count]
 
         scatter_points = valid_points
         if valid_points.shape[0] > self.max_scatter_points:
@@ -192,24 +217,26 @@ class ComplexReferenceController(QObject):
             scatter_points = valid_points[::stride]
 
         points_preview = []
-        for point, value in zip(preview_points, preview_values):
+        for point, real_value, imag_value in zip(
+            preview_points, preview_real, preview_imag
+        ):
             points_preview.append(
                 {
                     "x": float(x_axis[point[0]]),
                     "z": float(z_axis[point[1]]),
-                    "real": float(np.real(value)),
-                    "imag": float(np.imag(value)),
+                    "real": float(real_value),
+                    "imag": float(imag_value),
                 }
             )
 
         points_ui = []
-        for point, value in zip(ui_points, ui_values):
+        for point, real_value, imag_value in zip(ui_points, ui_real, ui_imag):
             points_ui.append(
                 {
                     "x": float(x_axis[point[0]]),
                     "z": float(z_axis[point[1]]),
-                    "real": float(np.real(value)),
-                    "imag": float(np.imag(value)),
+                    "real": float(real_value),
+                    "imag": float(imag_value),
                 }
             )
 
@@ -232,12 +259,12 @@ class ComplexReferenceController(QObject):
             "render_key": render_key,
             "scatter_x": x_axis[scatter_points[:, 0]],
             "scatter_z": z_axis[scatter_points[:, 1]],
-            "reference_real": float(np.real(reference_complex)),
-            "reference_imag": float(np.imag(reference_complex)),
+            "reference_real": reference_real,
+            "reference_imag": reference_imag,
             "reference_amplitude_db": float(
-                20 * np.log10(np.clip(np.abs(reference_complex), 1e-12, None))
+                20 * np.log10(np.clip(np.hypot(reference_real, reference_imag), 1e-12, None))
             ),
-            "reference_phase_rad": float(normalize_phase(np.angle(reference_complex))),
+            "reference_phase_rad": float(np.arctan2(reference_imag, reference_real)),
         }
 
         return corrected_data, info
@@ -652,10 +679,21 @@ class DataVisualizationWindow(QWidget):
 
         self.reference_controller = ComplexReferenceController(self)
         self.reference_controller.corrected_data_ready.connect(self._apply_corrected_data)
+        self._source_data = None
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(8)
+
+        controls_layout = QHBoxLayout()
+        self.drop_raw_checkbox = QCheckBox("Drop raw traces (vna_data) in viewer")
+        self.drop_raw_checkbox.setChecked(True)
+        self.drop_raw_checkbox.setToolTip(
+            "When enabled, raw VNA traces are not held in this window to reduce RAM usage."
+        )
+        controls_layout.addWidget(self.drop_raw_checkbox)
+        controls_layout.addStretch(1)
+        main_layout.addLayout(controls_layout)
 
         self.reference_widget = ComplexReferenceWidget(self.reference_controller)
         main_layout.addWidget(self.reference_widget)
@@ -671,14 +709,30 @@ class DataVisualizationWindow(QWidget):
         main_layout.addLayout(plots_layout, stretch=1)
 
         self.setLayout(main_layout)
+        self.drop_raw_checkbox.toggled.connect(self._on_drop_raw_toggled)
         self.update_data(data)
 
     def _apply_corrected_data(self, data):
         self.amplitude_widget.update_data(data)
         self.phase_widget.update_data(data)
 
+    def _prepare_view_data(self, data):
+        if (
+            self.drop_raw_checkbox.isChecked()
+            and isinstance(data, dict)
+            and "vna_data" in data
+        ):
+            return {key: value for key, value in data.items() if key != "vna_data"}
+        return data
+
+    def _on_drop_raw_toggled(self, _checked):
+        if self._source_data is None:
+            return
+        self.reference_controller.set_raw_data(self._prepare_view_data(self._source_data))
+
     def update_data(self, data):
-        self.reference_controller.set_raw_data(data)
+        self._source_data = data
+        self.reference_controller.set_raw_data(self._prepare_view_data(data))
 
 
 def build_demo_data(nx=220, nz=140):
@@ -705,9 +759,10 @@ def build_demo_data(nx=220, nz=140):
         "x": x,
         "y": np.array([0.0]),
         "z": z,
+        "complex_real": np.real(complex_map),
+        "complex_imag": np.imag(complex_map),
         "amplitude": amplitude,
         "phase": phase,
-        "vna_data": [],
     }
 
 

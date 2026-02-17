@@ -150,7 +150,12 @@ class MeasureThread(QThread):
                         (len(self.x_range), len(self.z_range))
                     ).tolist(),
                     "phase": np.zeros((len(self.x_range), len(self.z_range))).tolist(),
-                    "vna_data": [],
+                    "complex_real": np.zeros(
+                        (len(self.x_range), len(self.z_range))
+                    ).tolist(),
+                    "complex_imag": np.zeros(
+                        (len(self.x_range), len(self.z_range))
+                    ).tolist(),
                 }
                 preview_data = {
                     "freq_1": freq_1,
@@ -161,6 +166,8 @@ class MeasureThread(QThread):
                     "z": full_data["z"],
                     "amplitude": full_data["amplitude"],
                     "phase": full_data["phase"],
+                    "complex_real": full_data["complex_real"],
+                    "complex_imag": full_data["complex_imag"],
                 }
                 freq_has_data = False
 
@@ -202,8 +209,17 @@ class MeasureThread(QThread):
                             m_s_time = time.time()
                             vna_data = State.vna.get_data()
                             print(f"Meas time {time.time() - m_s_time} s")
-                            dat = np.mean(vna_data["amplitude"])
-                            phase = np.mean(vna_data["phase"])
+                            real = np.asarray(vna_data.get("real", []), dtype=np.float32)
+                            imag = np.asarray(vna_data.get("imag", []), dtype=np.float32)
+                            points_count = int(min(real.size, imag.size))
+                            if points_count == 0:
+                                continue
+                            mean_real = float(np.mean(real[:points_count], dtype=np.float64))
+                            mean_imag = float(np.mean(imag[:points_count], dtype=np.float64))
+                            dat = float(
+                                20 * np.log10(max(np.hypot(mean_real, mean_imag), 1e-12))
+                            )
+                            phase = float(np.arctan2(mean_imag, mean_real))
                             self.log.emit(
                                 {
                                     "type": "info",
@@ -213,7 +229,8 @@ class MeasureThread(QThread):
                             # Store data in correct position regardless of traversal order
                             full_data["amplitude"][step_x][z_idx] = dat
                             full_data["phase"][step_x][z_idx] = phase
-                            full_data["vna_data"].append(vna_data)
+                            full_data["complex_real"][step_x][z_idx] = mean_real
+                            full_data["complex_imag"][step_x][z_idx] = mean_imag
                             freq_has_data = True
                             # Emit only lightweight data needed by live plots.
                             self.data.emit(preview_data)
