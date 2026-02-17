@@ -4,9 +4,11 @@ from PySide6 import QtGui
 from PySide6.QtCore import QObject, QLoggingCategory, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -29,6 +31,35 @@ def complex_to_amplitude_phase(complex_data):
     amplitude_db = 20 * np.log10(np.clip(magnitude, 1e-12, None))
     phase = normalize_phase(np.angle(complex_data))
     return amplitude_db, phase
+
+
+def extract_xz_slice(data, y_index):
+    """Return 2D x-z slice from either 2D or 3D data payload."""
+    if not isinstance(data, dict):
+        return {}
+
+    amplitude = np.asarray(data.get("amplitude", []))
+    if amplitude.ndim != 3:
+        return data
+
+    y_len = amplitude.shape[0]
+    if y_len == 0:
+        return data
+    y_idx = int(np.clip(y_index, 0, y_len - 1))
+
+    sliced = dict(data)
+    for key in ("amplitude", "phase", "complex_real", "complex_imag"):
+        arr = np.asarray(data.get(key, []))
+        if arr.ndim == 3 and arr.shape[0] == y_len:
+            sliced[key] = arr[y_idx]
+
+    y_axis = np.asarray(data.get("y", np.arange(y_len)), dtype=float)
+    if y_axis.size != y_len:
+        y_axis = np.arange(y_len, dtype=float)
+
+    sliced["y_index"] = y_idx
+    sliced["y_value"] = float(y_axis[y_idx])
+    return sliced
 
 
 class ComplexReferenceController(QObject):
@@ -363,6 +394,86 @@ class ComplexReferenceWidget(QWidget):
         self.points_label.setToolTip("\n".join(tooltip_lines))
 
 
+class YSliceSelectorWidget(QWidget):
+    """Y-slice selector with numeric input and slider."""
+
+    y_index_changed = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._y_values = np.array([0.0], dtype=float)
+        self._updating = False
+        self._current_index = 0
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.title_label = QLabel("Y slice:")
+        self.value_spin = QDoubleSpinBox()
+        self.value_spin.setDecimals(4)
+        self.value_spin.setKeyboardTracking(False)
+        self.value_spin.setSingleStep(0.1)
+        self.value_spin.setMinimumWidth(120)
+        self.value_spin.setSuffix(" mm")
+
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.setMaximum(0)
+        self.index_label = QLabel("0/0")
+        self.index_label.setMinimumWidth(50)
+
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.value_spin)
+        layout.addWidget(self.slider, stretch=1)
+        layout.addWidget(self.index_label)
+        self.setLayout(layout)
+
+        self.value_spin.valueChanged.connect(self._on_spin_changed)
+        self.slider.valueChanged.connect(self._on_slider_changed)
+        self.setVisible(False)
+
+    def set_y_values(self, y_values):
+        values = np.asarray(y_values, dtype=float)
+        if values.size == 0:
+            values = np.array([0.0], dtype=float)
+        self._y_values = values
+        self.slider.setMaximum(max(values.size - 1, 0))
+        self.setVisible(values.size > 1)
+        self.set_index(min(self._current_index, values.size - 1), emit_signal=False)
+
+    def set_index(self, index, emit_signal=True):
+        if self._y_values.size == 0:
+            return
+
+        idx = int(np.clip(index, 0, self._y_values.size - 1))
+        if idx == self._current_index and emit_signal:
+            self.y_index_changed.emit(idx)
+            return
+
+        self._updating = True
+        self._current_index = idx
+        self.slider.setValue(idx)
+        self.value_spin.setRange(float(np.min(self._y_values)), float(np.max(self._y_values)))
+        self.value_spin.setValue(float(self._y_values[idx]))
+        self.index_label.setText(f"{idx + 1}/{self._y_values.size}")
+        self._updating = False
+
+        if emit_signal:
+            self.y_index_changed.emit(idx)
+
+    def _on_slider_changed(self, index):
+        if self._updating:
+            return
+        self.set_index(index, emit_signal=True)
+
+    def _on_spin_changed(self, value):
+        if self._updating or self._y_values.size == 0:
+            return
+        idx = int(np.argmin(np.abs(self._y_values - float(value))))
+        self.set_index(idx, emit_signal=True)
+
+
 class BasePlotWidget(QWidget):
     """Base widget for pyqtgraph visualization with hover info."""
 
@@ -680,6 +791,7 @@ class DataVisualizationWindow(QWidget):
         self.reference_controller = ComplexReferenceController(self)
         self.reference_controller.corrected_data_ready.connect(self._apply_corrected_data)
         self._source_data = None
+        self._current_y_index = 0
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(5, 5, 5, 5)
@@ -694,6 +806,10 @@ class DataVisualizationWindow(QWidget):
         controls_layout.addWidget(self.drop_raw_checkbox)
         controls_layout.addStretch(1)
         main_layout.addLayout(controls_layout)
+
+        self.y_slice_widget = YSliceSelectorWidget()
+        self.y_slice_widget.y_index_changed.connect(self._on_y_slice_changed)
+        main_layout.addWidget(self.y_slice_widget)
 
         self.reference_widget = ComplexReferenceWidget(self.reference_controller)
         main_layout.addWidget(self.reference_widget)
@@ -725,19 +841,46 @@ class DataVisualizationWindow(QWidget):
             return {key: value for key, value in data.items() if key != "vna_data"}
         return data
 
+    @staticmethod
+    def _extract_y_axis(data):
+        amplitude = np.asarray(data.get("amplitude", []))
+        if amplitude.ndim != 3:
+            return np.array([0.0], dtype=float)
+        y_len = amplitude.shape[0]
+        y_axis = np.asarray(data.get("y", np.arange(y_len)), dtype=float)
+        if y_axis.size != y_len:
+            y_axis = np.arange(y_len, dtype=float)
+        return y_axis
+
     def _on_drop_raw_toggled(self, _checked):
         if self._source_data is None:
             return
-        self.reference_controller.set_raw_data(self._prepare_view_data(self._source_data))
+        self._push_current_slice()
+
+    def _on_y_slice_changed(self, y_index):
+        self._current_y_index = int(y_index)
+        self._push_current_slice()
+
+    def _push_current_slice(self):
+        if self._source_data is None:
+            return
+        view_data = self._prepare_view_data(self._source_data)
+        slice_data = extract_xz_slice(view_data, self._current_y_index)
+        self.reference_controller.set_raw_data(slice_data)
 
     def update_data(self, data):
         self._source_data = data
-        self.reference_controller.set_raw_data(self._prepare_view_data(data))
+        y_axis = self._extract_y_axis(data)
+        self.y_slice_widget.set_y_values(y_axis)
+        self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
+        self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)
+        self._push_current_slice()
 
 
-def build_demo_data(nx=220, nz=140):
+def build_demo_data(nx=220, nz=140, ny=9):
     """Generate synthetic amplitude/phase data for standalone widget testing."""
     x = np.linspace(-25.0, 25.0, nx)
+    y = np.linspace(-4.0, 4.0, ny)
     z = np.linspace(-12.0, 12.0, nz)
     xx, zz = np.meshgrid(x, z, indexing="ij")
 
@@ -751,16 +894,24 @@ def build_demo_data(nx=220, nz=140):
     complex_map = magnitude * np.exp(1j * phase)
     complex_map += 0.03 * np.exp(1j * 1.1)
 
-    amplitude, phase = complex_to_amplitude_phase(complex_map)
+    complex_volume = np.empty((ny, nx, nz), dtype=np.complex64)
+    for y_idx, y_val in enumerate(y):
+        phase_shift = np.exp(1j * (0.25 * y_val))
+        amp_scale = 1.0 + 0.05 * np.cos(0.8 * y_val)
+        complex_volume[y_idx] = (complex_map * amp_scale * phase_shift).astype(
+            np.complex64
+        )
+
+    amplitude, phase = complex_to_amplitude_phase(complex_volume)
     return {
         "freq_1": 142.35000,
         "freq_2": 142.35000,
         "amp_1": -20.0,
         "x": x,
-        "y": np.array([0.0]),
+        "y": y,
         "z": z,
-        "complex_real": np.real(complex_map),
-        "complex_imag": np.imag(complex_map),
+        "complex_real": np.real(complex_volume),
+        "complex_imag": np.imag(complex_volume),
         "amplitude": amplitude,
         "phase": phase,
     }

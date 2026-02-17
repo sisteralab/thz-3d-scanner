@@ -147,14 +147,16 @@ class MeasureThread(QThread):
                     "y": self.y_range.tolist(),
                     "z": self.z_range.tolist(),
                     "amplitude": np.zeros(
-                        (len(self.x_range), len(self.z_range))
+                        (len(self.y_range), len(self.x_range), len(self.z_range))
                     ).tolist(),
-                    "phase": np.zeros((len(self.x_range), len(self.z_range))).tolist(),
+                    "phase": np.zeros(
+                        (len(self.y_range), len(self.x_range), len(self.z_range))
+                    ).tolist(),
                     "complex_real": np.zeros(
-                        (len(self.x_range), len(self.z_range))
+                        (len(self.y_range), len(self.x_range), len(self.z_range))
                     ).tolist(),
                     "complex_imag": np.zeros(
-                        (len(self.x_range), len(self.z_range))
+                        (len(self.y_range), len(self.x_range), len(self.z_range))
                     ).tolist(),
                 }
                 preview_data = {
@@ -226,11 +228,11 @@ class MeasureThread(QThread):
                                     "msg": f"freq1 {freq_1:.5f}GHz; freq2 {freq_2:.5f}GHz; pow {dat:.5f} dB; phase {phase:.2f}",
                                 }
                             )
-                            # Store data in correct position regardless of traversal order
-                            full_data["amplitude"][step_x][z_idx] = dat
-                            full_data["phase"][step_x][z_idx] = phase
-                            full_data["complex_real"][step_x][z_idx] = mean_real
-                            full_data["complex_imag"][step_x][z_idx] = mean_imag
+                            # Store full 3D tensor as [y_idx][x_idx][z_idx].
+                            full_data["amplitude"][step_y][step_x][z_idx] = dat
+                            full_data["phase"][step_y][step_x][z_idx] = phase
+                            full_data["complex_real"][step_y][step_x][z_idx] = mean_real
+                            full_data["complex_imag"][step_y][step_x][z_idx] = mean_imag
                             freq_has_data = True
                             # Emit only lightweight data needed by live plots.
                             self.data.emit(preview_data)

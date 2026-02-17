@@ -18,6 +18,8 @@ from interface.plot_widgets import (
     ComplexReferenceController,
     ComplexReferenceWidget,
     PhasePlotWidget,
+    YSliceSelectorWidget,
+    extract_xz_slice,
 )
 from store.state import State
 
@@ -36,6 +38,8 @@ class MainWindow(QMainWindow):
 
         self.manager_widget = ManagerWidget(self)
         self.reference_controller = ComplexReferenceController(self)
+        self._source_data = None
+        self._current_y_index = 0
 
         # Create amplitude pyqtgraph widget
         self.amplitude_widget = AmplitudePlotWidget(
@@ -45,7 +49,9 @@ class MainWindow(QMainWindow):
         # Create phase pyqtgraph widget
         self.phase_widget = PhasePlotWidget(reference_controller=self.reference_controller)
         self.reference_widget = ComplexReferenceWidget(self.reference_controller)
+        self.y_slice_widget = YSliceSelectorWidget()
         self.reference_controller.corrected_data_ready.connect(self._apply_corrected_data)
+        self.y_slice_widget.y_index_changed.connect(self._on_y_slice_changed)
 
         self.log_widget = LogWidget(self)
 
@@ -54,6 +60,7 @@ class MainWindow(QMainWindow):
         plots_layout.addWidget(self.amplitude_widget, stretch=1)
         plots_layout.addWidget(self.phase_widget, stretch=1)
 
+        left_layout.addWidget(self.y_slice_widget)
         left_layout.addWidget(self.reference_widget)
         left_layout.addLayout(plots_layout)
         left_layout.addWidget(self.log_widget)
@@ -95,7 +102,34 @@ class MainWindow(QMainWindow):
 
     def update_plot(self, data):
         """Update the visualization with new measurement data"""
-        self.reference_controller.set_raw_data(data)
+        self._source_data = data
+        y_axis = self._extract_y_axis(data)
+        self.y_slice_widget.set_y_values(y_axis)
+        self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
+        self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)
+        self._push_current_slice()
+
+    @staticmethod
+    def _extract_y_axis(data):
+        amplitude = np.asarray(data.get("amplitude", []))
+        if amplitude.ndim != 3:
+            return np.array([0.0], dtype=float)
+        y_len = amplitude.shape[0]
+        y_axis = np.asarray(data.get("y", np.arange(y_len)), dtype=float)
+        if y_axis.size != y_len:
+            y_axis = np.arange(y_len, dtype=float)
+        return y_axis
+
+    def _on_y_slice_changed(self, y_index):
+        self._current_y_index = int(y_index)
+        self._push_current_slice()
+
+    def _push_current_slice(self):
+        if self._source_data is None:
+            return
+        self.reference_controller.set_raw_data(
+            extract_xz_slice(self._source_data, self._current_y_index)
+        )
 
     def _apply_corrected_data(self, data):
         """Apply corrected data after complex reference subtraction."""
