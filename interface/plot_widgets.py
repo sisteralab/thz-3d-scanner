@@ -569,16 +569,46 @@ class BasePlotWidget(QWidget):
             )
 
     @staticmethod
-    def _in_axis_bounds(axis, value):
+    def _axis_edges(axis):
+        axis = np.asarray(axis, dtype=float)
         if axis.size == 0:
-            return False
+            return np.array([], dtype=float)
         if axis.size == 1:
-            return np.isclose(value, axis[0], atol=1.0)
-        step = float(np.min(np.abs(np.diff(axis))))
-        if step == 0:
-            step = 1.0
-        lower = float(np.min(axis) - step / 2)
-        upper = float(np.max(axis) + step / 2)
+            center = float(axis[0])
+            return np.array([center - 0.5, center + 0.5], dtype=float)
+
+        edges = np.empty(axis.size + 1, dtype=float)
+        edges[1:-1] = 0.5 * (axis[:-1] + axis[1:])
+        edges[0] = axis[0] - 0.5 * (axis[1] - axis[0])
+        edges[-1] = axis[-1] + 0.5 * (axis[-1] - axis[-2])
+        return edges
+
+    @staticmethod
+    def _axis_cell_bounds(axis):
+        edges = BasePlotWidget._axis_edges(axis)
+        if edges.size < 2:
+            return np.array([], dtype=float), np.array([], dtype=float)
+        low = np.minimum(edges[:-1], edges[1:])
+        high = np.maximum(edges[:-1], edges[1:])
+        return low, high
+
+    @staticmethod
+    def _roi_bounds(roi):
+        pos = roi.pos()
+        size = roi.size()
+        x0 = float(pos.x())
+        x1 = float(pos.x() + size.x())
+        z0 = float(pos.y())
+        z1 = float(pos.y() + size.y())
+        return min(x0, x1), max(x0, x1), min(z0, z1), max(z0, z1)
+
+    @staticmethod
+    def _in_axis_bounds(axis, value):
+        low, high = BasePlotWidget._axis_cell_bounds(axis)
+        if low.size == 0:
+            return False
+        lower = float(np.min(low))
+        upper = float(np.max(high))
         return lower <= value <= upper
 
     def _map_world_to_indices(self, x_world, z_world):
@@ -693,11 +723,24 @@ class BasePlotWidget(QWidget):
 
         self.image_item.setImage(data, autoLevels=False)
 
-        x_step = x_data[1] - x_data[0] if len(x_data) > 1 else 1
-        z_step = z_data[1] - z_data[0] if len(z_data) > 1 else 1
+        x_edges = self._axis_edges(x_data)
+        z_edges = self._axis_edges(z_data)
+        if x_edges.size >= 2:
+            x_start = float(x_edges[0])
+            x_step = float((x_edges[-1] - x_edges[0]) / max(1, x_data.size))
+        else:
+            x_start = float(x_data[0]) if x_data.size else 0.0
+            x_step = 1.0
+        if z_edges.size >= 2:
+            z_start = float(z_edges[0])
+            z_step = float((z_edges[-1] - z_edges[0]) / max(1, z_data.size))
+        else:
+            z_start = float(z_data[0]) if z_data.size else 0.0
+            z_step = 1.0
 
         transform = QtGui.QTransform()
-        transform.translate(float(x_data[0]), float(z_data[0]))
+        # Place image cells so axis values match pixel centers.
+        transform.translate(x_start, z_start)
         transform.scale(float(x_step), float(z_step))
         self.image_item.setTransform(transform)
 
@@ -712,20 +755,27 @@ class BasePlotWidget(QWidget):
             return
 
         try:
-            roi_data = self.roi.getArrayRegion(data, self.image_item)
-            if roi_data is None or roi_data.size == 0:
+            x_low, x_high = self._axis_cell_bounds(self.x_axis)
+            z_low, z_high = self._axis_cell_bounds(self.z_axis)
+            if (
+                x_low.size != data.shape[0]
+                or x_high.size != data.shape[0]
+                or z_low.size != data.shape[1]
+                or z_high.size != data.shape[1]
+            ):
                 return
 
-            if roi_data.ndim > 1:
-                mean_data = np.mean(roi_data, axis=1)
-            else:
-                mean_data = roi_data
+            roi_x_min, roi_x_max, roi_z_min, roi_z_max = self._roi_bounds(self.roi)
+            x_indices = np.where((x_high >= roi_x_min) & (x_low <= roi_x_max))[0]
+            z_indices = np.where((z_high >= roi_z_min) & (z_low <= roi_z_max))[0]
+            if x_indices.size == 0 or z_indices.size == 0:
+                if self.roi_data_curve is not None:
+                    self.roi_data_curve.clear()
+                return
 
-            roi_pos = self.roi.pos()
-            roi_size = self.roi.size()
-            x_start = roi_pos.x()
-            x_end = x_start + roi_size.x()
-            x_positions = np.linspace(x_start, x_end, mean_data.shape[0])
+            roi_data = data[np.ix_(x_indices, z_indices)]
+            mean_data = np.mean(roi_data, axis=1)
+            x_positions = self.x_axis[x_indices]
 
             if self.roi_data_curve is None:
                 self.roi_data_curve = self.roi_plot_item.plot(
