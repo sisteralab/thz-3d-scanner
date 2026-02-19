@@ -52,6 +52,7 @@ class State:
     generator_freq_points_2: float = float(
         settings.value("Measure/generator_freq_points_2", 1)
     )
+    generator_amps_2: str = str(settings.value("Measure/generator_amps_2", ""))
 
     use_x_sweep: bool = settings.value("Measure/use_x_sweep", "true") == "true"
     use_y_sweep: bool = settings.value("Measure/use_y_sweep", "true") == "true"
@@ -151,6 +152,7 @@ class State:
         cls.settings.setValue(
             "Measure/generator_freq_points_2", cls.generator_freq_points_2
         )
+        cls.settings.setValue("Measure/generator_amps_2", cls.generator_amps_2)
 
         cls.settings.sync()
 
