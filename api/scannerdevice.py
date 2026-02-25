@@ -135,6 +135,28 @@ class ScannerDevice:
         result = self.lib.set_move_settings_calb(
             device_id, byref(mvst), byref(self.user_unit)
         )
+        return result == Result.Ok
+
+    def get_move_settings(self, device_id):
+        """
+        Read calibrated move profile for given axis.
+        :param device_id: device id.
+        :return: dict with speed/accel/decel or None if unavailable.
+        """
+        fn = getattr(self.lib, "get_move_settings_calb", None)
+        if fn is None:
+            return None
+
+        mvst = move_settings_calb_t()
+        result = fn(device_id, byref(mvst), byref(self.user_unit))
+        if result != Result.Ok:
+            return None
+
+        return {
+            "speed": float(mvst.Speed),
+            "accel": float(mvst.Accel),
+            "decel": float(mvst.Decel),
+        }
 
     def emergency_stop(self):
         """

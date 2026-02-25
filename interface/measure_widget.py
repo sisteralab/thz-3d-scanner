@@ -102,6 +102,8 @@ class MeasureThread(QThread):
         self._step_counter = 0
         self._total_steps = 0
         self._start_time = 0.0
+        self._z_fast_profile = None
+        self._z_fly_profile = None
 
         self.measure = MeasureModel.objects.create(data=[])
         self.measure.save(False)
@@ -124,6 +126,55 @@ class MeasureThread(QThread):
         State.vna.set_average_count(max(1, int(self.vna_average_count)))
         State.vna.set_average_status(bool(self.vna_average_enabled))
         State.vna.set_bandwidth(max(1, int(self.vna_bandwidth)))
+
+    def _build_z_profiles(self):
+        if not (self.use_z_fly_mode and self.use_z_sweep):
+            self._z_fast_profile = None
+            self._z_fly_profile = None
+            return
+
+        try:
+            self._z_fast_profile = State.scanner.get_move_settings(State.scanner.id_z)
+        except Exception:
+            self._z_fast_profile = None
+
+        if not self._z_fast_profile:
+            # Fallback profile in case current settings cannot be read from controller.
+            fallback_speed = max(float(self.z_fly_speed) * 5.0, 10.0)
+            fallback_accel = max(fallback_speed * 5.0, 10.0)
+            self._z_fast_profile = {
+                "speed": fallback_speed,
+                "accel": fallback_accel,
+                "decel": fallback_accel,
+            }
+            self.log.emit(
+                {
+                    "type": "warning",
+                    "msg": (
+                        "Could not read default Z move profile; using fallback fast profile."
+                    ),
+                }
+            )
+
+        fly_accel = max(1.0, float(self.z_fly_speed) * 5.0)
+        self._z_fly_profile = {
+            "speed": float(self.z_fly_speed),
+            "accel": fly_accel,
+            "decel": fly_accel,
+        }
+
+    def _apply_z_profile(self, profile):
+        if not profile:
+            return
+        try:
+            State.scanner.set_move_settings(
+                State.scanner.id_z,
+                float(profile["speed"]),
+                float(profile["accel"]),
+                float(profile["decel"]),
+            )
+        except Exception as err:
+            self.log.emit({"type": "warning", "msg": f"Failed to set Z profile: {err}"})
 
     def _update_progress(self):
         if self._total_steps <= 0:
@@ -240,6 +291,8 @@ class MeasureThread(QThread):
         target_idx = 0
 
         if self.use_z_sweep:
+            # Between fly passes, keep default (fast) profile.
+            self._apply_z_profile(self._z_fast_profile)
             State.scanner.move_z(start_z)
             self.msleep(self.z_movement_delay)
             first_target_z = float(z_targets[target_idx])
@@ -255,6 +308,8 @@ class MeasureThread(QThread):
             ):
                 captured += 1
             target_idx += 1
+            # During acquisition pass, use requested constant fly speed.
+            self._apply_z_profile(self._z_fly_profile)
             State.scanner.move_z_async(end_z)
 
         travel = abs(end_z - start_z)
@@ -316,6 +371,8 @@ class MeasureThread(QThread):
                 State.scanner.wait_for_stop_z()
             except Exception:
                 pass
+            # Restore fast/default profile for non-acquisition moves.
+            self._apply_z_profile(self._z_fast_profile)
 
         if missed > 0:
             self.log.emit(
@@ -358,10 +415,7 @@ class MeasureThread(QThread):
             if self.use_z_fly_mode and self.use_z_sweep:
                 if float(self.z_fly_speed) <= 0:
                     raise ValueError("Z fly speed must be > 0")
-                accel = max(1.0, float(self.z_fly_speed) * 5.0)
-                State.scanner.set_move_settings(
-                    State.scanner.id_z, float(self.z_fly_speed), accel, accel
-                )
+                self._build_z_profiles()
 
             use_z_snake = self.use_z_snake_pattern and not self.use_z_fly_mode
 
@@ -508,6 +562,10 @@ class MeasureThread(QThread):
 
         except (AttributeError, Exception) as e:
             self.log.emit({"type": "error", "msg": f"{e}"})
+        finally:
+            # Ensure Z profile is restored after fly measurement.
+            if self.use_z_fly_mode and self.use_z_sweep:
+                self._apply_z_profile(self._z_fast_profile)
 
         self.final_data.emit(self.measure.data)
         self.measure.save(True)
