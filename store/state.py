@@ -60,6 +60,19 @@ class State:
     use_z_snake_pattern: bool = (
         settings.value("Measure/use_z_snake_pattern", "true") == "true"
     )
+    use_z_fly_mode: bool = settings.value("Measure/use_z_fly_mode", "false") == "true"
+    z_fly_speed: float = float(settings.value("Measure/z_fly_speed", 2.0))
+
+    measure_vna_points: int = int(settings.value("Measure/vna_points", 100))
+    measure_vna_start_time: float = float(settings.value("Measure/vna_start_time", 0.0))
+    measure_vna_stop_time: float = float(settings.value("Measure/vna_stop_time", 0.1))
+    measure_vna_bandwidth: int = int(settings.value("Measure/vna_bandwidth", 1000))
+    measure_vna_average_count: int = int(
+        settings.value("Measure/vna_average_count", 1)
+    )
+    measure_vna_average_enabled: bool = (
+        settings.value("Measure/vna_average_enabled", "false") == "true"
+    )
 
     # Movement delays in milliseconds
     x_movement_delay: int = int(settings.value("Measure/x_movement_delay", 100))
@@ -92,6 +105,18 @@ class State:
         cls.settings.setValue("Measure/use_y_sweep", cls.use_y_sweep)
         cls.settings.setValue("Measure/use_z_sweep", cls.use_z_sweep)
         cls.settings.setValue("Measure/use_z_snake_pattern", cls.use_z_snake_pattern)
+        cls.settings.setValue("Measure/use_z_fly_mode", cls.use_z_fly_mode)
+        cls.settings.setValue("Measure/z_fly_speed", cls.z_fly_speed)
+        cls.settings.setValue("Measure/vna_points", cls.measure_vna_points)
+        cls.settings.setValue("Measure/vna_start_time", cls.measure_vna_start_time)
+        cls.settings.setValue("Measure/vna_stop_time", cls.measure_vna_stop_time)
+        cls.settings.setValue("Measure/vna_bandwidth", cls.measure_vna_bandwidth)
+        cls.settings.setValue(
+            "Measure/vna_average_count", cls.measure_vna_average_count
+        )
+        cls.settings.setValue(
+            "Measure/vna_average_enabled", cls.measure_vna_average_enabled
+        )
 
         cls.settings.setValue("Measure/x_movement_delay", cls.x_movement_delay)
         cls.settings.setValue("Measure/y_movement_delay", cls.y_movement_delay)

@@ -252,6 +252,13 @@ class ScannerDevice:
         self.lib.command_move_calb(self.id_z, c_float(position), byref(self.user_unit))
         self.wait_for_stop_z()
 
+    def move_z_async(self, position):
+        """
+        Start movement to the specified Z coordinate without waiting for completion.
+        :param position: destination position in user units.
+        """
+        self.lib.command_move_calb(self.id_z, c_float(position), byref(self.user_unit))
+
     def shift_axis(self, device_id, distance):
         """
         Shift by the specified offset coordinates on the x-axis.

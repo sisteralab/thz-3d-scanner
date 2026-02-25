@@ -90,11 +90,11 @@ class VNABlock(BaseInstrument):
     def set_stop_frequency(self, freq: float) -> None:
         self.write(f"SENS:FREQ:STOP {freq}")
 
-    def set_start_time(self, stime: float) -> None:
-        ...
+    def set_start_time(self, stime: float, channel: int = 1) -> None:
+        self.write(f"SENSe{channel}:SWEep:TIME:STARt {stime}")
 
-    def set_stop_time(self, stime: float) -> None:
-        ...
+    def set_stop_time(self, stime: float, channel: int = 1) -> None:
+        self.write(f"SENSe{channel}:SWEep:TIME:STOP {stime}")
 
     def set_parameter(
         self, parameter: VNA_PARAMETERS = "BA", trace: str = "Trc1", channel: int = 1
