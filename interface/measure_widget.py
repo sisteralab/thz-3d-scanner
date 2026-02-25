@@ -133,6 +133,10 @@ class MeasureThread(QThread):
             self._z_fly_profile = None
             return
 
+        fly_speed = float(self.z_fly_speed)
+        fallback_fast_speed = max(20.0, fly_speed * 8.0)
+        fallback_fast_accel = max(200.0, fallback_fast_speed * 8.0)
+
         try:
             self._z_fast_profile = State.scanner.get_move_settings(State.scanner.id_z)
         except Exception:
@@ -140,25 +144,41 @@ class MeasureThread(QThread):
 
         if not self._z_fast_profile:
             # Fallback profile in case current settings cannot be read from controller.
-            fallback_speed = max(float(self.z_fly_speed) * 5.0, 10.0)
-            fallback_accel = max(fallback_speed * 5.0, 10.0)
             self._z_fast_profile = {
-                "speed": fallback_speed,
-                "accel": fallback_accel,
-                "decel": fallback_accel,
+                "speed": fallback_fast_speed,
+                "accel": fallback_fast_accel,
+                "decel": fallback_fast_accel,
             }
             self.log.emit(
                 {
                     "type": "warning",
                     "msg": (
-                        "Could not read default Z move profile; using fallback fast profile."
+                        "Could not read default Z move profile; "
+                        f"using fallback fast profile speed={fallback_fast_speed:.2f}."
                     ),
                 }
             )
+        else:
+            current_fast_speed = float(self._z_fast_profile.get("speed", 0.0))
+            if current_fast_speed <= max(1.0, fly_speed * 1.5):
+                self.log.emit(
+                    {
+                        "type": "warning",
+                        "msg": (
+                            "Detected low Z default profile; boosting fast profile for "
+                            f"non-measurement moves to speed={fallback_fast_speed:.2f}."
+                        ),
+                    }
+                )
+                self._z_fast_profile = {
+                    "speed": fallback_fast_speed,
+                    "accel": fallback_fast_accel,
+                    "decel": fallback_fast_accel,
+                }
 
-        fly_accel = max(1.0, float(self.z_fly_speed) * 5.0)
+        fly_accel = max(1.0, fly_speed * 5.0)
         self._z_fly_profile = {
-            "speed": float(self.z_fly_speed),
+            "speed": fly_speed,
             "accel": fly_accel,
             "decel": fly_accel,
         }
