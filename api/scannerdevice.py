@@ -8,17 +8,30 @@ logger = logging.getLogger(__name__)
 
 
 class ScannerDevice:
-    def __init__(self, x_port: str, y_port: str, z_port: str):
+    def __init__(
+        self,
+        x_port: str,
+        y_port: str,
+        z_port: str,
+        rotation_port: str = "",
+        rotation_degrees_per_step: float = 0.01,
+    ):
         self.user_unit = None
+        self.rotation_unit = None
         self.steps_per_revolution = 200
         self.lead_screw_pitch = 2.5
         self.id_x = None
         self.id_y = None
         self.id_z = None
+        self.id_rotation = None
         self.lib = loader.lib
-        self.x_port = f"xi-com:\\\\.\\{x_port}"
-        self.y_port = f"xi-com:\\\\.\\{y_port}"
-        self.z_port = f"xi-com:\\\\.\\{z_port}"
+        self.x_port = f"xi-com:\\\\.\\{x_port}" if x_port.strip() else ""
+        self.y_port = f"xi-com:\\\\.\\{y_port}" if y_port.strip() else ""
+        self.z_port = f"xi-com:\\\\.\\{z_port}" if z_port.strip() else ""
+        self.rotation_port = (
+            f"xi-com:\\\\.\\{rotation_port}" if rotation_port.strip() else ""
+        )
+        self.rotation_degrees_per_step = float(rotation_degrees_per_step)
 
         if self.lib:
             logger.info(
@@ -69,39 +82,63 @@ class ScannerDevice:
         if result == Result.Ok:
             logger.info(" Serial: " + repr(x_serial.value))
 
+    def _connect_device(self, port: str, axis_name: str):
+        if not port:
+            logger.info(f"{axis_name} axis port is empty; skipping.")
+            return None
+
+        device_id = self.lib.open_device(port.encode())
+        if device_id <= 0:
+            logger.error(f"Error open device {axis_name}: {port}")
+            return None
+
+        logger.info(f"{axis_name} axis device id: {device_id!r}")
+        return device_id
+
+    def connected_axes(self):
+        axes = []
+        for axis, device_id in (
+            ("X", self.id_x),
+            ("Y", self.id_y),
+            ("Z", self.id_z),
+            ("Rotation", self.id_rotation),
+        ):
+            if device_id:
+                axes.append(axis)
+        return axes
+
+    def has_connected_devices(self) -> bool:
+        return bool(self.connected_axes())
+
+    def _iter_device_ids(self):
+        return tuple(
+            device_id
+            for device_id in (self.id_x, self.id_y, self.id_z, self.id_rotation)
+            if device_id
+        )
+
+    @staticmethod
+    def _require_device(device_id, axis_name: str):
+        if not device_id:
+            raise RuntimeError(f"{axis_name} axis is not initialized")
+
     def connect_devices(self) -> bool:
         """
         Open a device with OS uri and return identifier of the device which can be used in calls.
         """
         try:
-            self.id_x = self.lib.open_device(self.x_port.encode())
-            if self.id_x <= 0:
-                logger.error(f"Error open device X: {self.x_port}")
-                return False
-            else:
-                logger.info("X axis device id: " + repr(self.id_x))
+            self.id_x = self._connect_device(self.x_port, "X")
+            self.id_y = self._connect_device(self.y_port, "Y")
+            self.id_z = self._connect_device(self.z_port, "Z")
 
-            self.id_y = self.lib.open_device(self.y_port.encode())
-            if self.id_y <= 0:
-                logger.error(f"Error open device Y: {self.y_port}")
-                return False
-            else:
-                logger.info("Y axis device id: " + repr(self.id_y))
-
-            self.id_z = self.lib.open_device(self.z_port.encode())
-            if self.id_z <= 0:
-                logger.error(f"Error open device Z: {self.z_port}")
-                return False
-            else:
-                logger.info("Z axis device id: " + repr(self.id_z))
+            self.id_rotation = self._connect_device(self.rotation_port, "Rotation")
 
         except Exception as e:
             logger.exception(
                 "COM ports not configured correctly, please check your settings.",
                 exc_info=True,
             )
-            return False
-        return True
+        return self.has_connected_devices()
 
     def set_units(self):
         """
@@ -115,7 +152,16 @@ class ScannerDevice:
         self.user_unit = user_unit
         logger.info(f"Scale factor set to: {user_unit.A} mm/step")
 
-    def set_move_settings(self, device_id, speed, asel, decel):
+        rotation_unit = calibration_t()
+        rotation_unit.A = self.rotation_degrees_per_step
+        rotation_unit.MicrostepMode = 9
+        self.rotation_unit = rotation_unit
+        logger.info(f"Rotation scale factor set to: {rotation_unit.A} deg/step")
+
+    def _get_calibration(self, calibration=None):
+        return calibration if calibration is not None else self.user_unit
+
+    def set_move_settings(self, device_id, speed, asel, decel, calibration=None):
         """
         Setting up movement parameters.
         :param device_id: device id.
@@ -133,11 +179,11 @@ class ScannerDevice:
 
         # Writing data to the controller
         result = self.lib.set_move_settings_calb(
-            device_id, byref(mvst), byref(self.user_unit)
+            device_id, byref(mvst), byref(self._get_calibration(calibration))
         )
         return result == Result.Ok
 
-    def get_move_settings(self, device_id):
+    def get_move_settings(self, device_id, calibration=None):
         """
         Read calibrated move profile for given axis.
         :param device_id: device id.
@@ -148,7 +194,7 @@ class ScannerDevice:
             return None
 
         mvst = move_settings_calb_t()
-        result = fn(device_id, byref(mvst), byref(self.user_unit))
+        result = fn(device_id, byref(mvst), byref(self._get_calibration(calibration)))
         if result != Result.Ok:
             return None
 
@@ -162,9 +208,8 @@ class ScannerDevice:
         """
         Immediately stop all engines.
         """
-        self.lib.command_stop(self.id_x)
-        self.lib.command_stop(self.id_y)
-        self.lib.command_stop(self.id_z)
+        for device_id in self._iter_device_ids():
+            self.lib.command_stop(device_id)
 
     def dwell(self, duration):
         """
@@ -178,17 +223,17 @@ class ScannerDevice:
         """
         Sets the current position as zero for all axes.
         """
-        self.lib.command_zero(self.id_x)
-        self.lib.command_zero(self.id_y)
-        self.lib.command_zero(self.id_z)
+        for device_id in self._iter_device_ids():
+            self.lib.command_zero(device_id)
 
     def set_axis_origin(self, device_id):
         """
         Sets the current position as zero for a given axis.
         """
+        self._require_device(device_id, "Selected")
         self.lib.command_zero(device_id)
 
-    def get_position(self, device_id):
+    def get_position(self, device_id, calibration=None):
         """
         Obtaining information about the position of the positioner.
 
@@ -197,9 +242,10 @@ class ScannerDevice:
         Also, depending on the state of the mode parameter, information can be obtained in user units.
         :param device_id: device id.
         """
+        self._require_device(device_id, "Selected")
         x_pos = get_position_calb_t()
         result = self.lib.get_position_calb(
-            device_id, byref(x_pos), byref(self.user_unit)
+            device_id, byref(x_pos), byref(self._get_calibration(calibration))
         )
         if result == Result.Ok:
             pass
@@ -209,23 +255,24 @@ class ScannerDevice:
         """
         Waiting for the movement to complete.
         """
-        stat = status_t()
-        stat.MvCmdSts |= 0x80
-        while (stat.MvCmdSts & MvcmdStatus.MVCMD_RUNNING) > 0:
-            result1 = self.lib.get_status(self.id_x, byref(stat))
-            result2 = self.lib.get_status(self.id_y, byref(stat))
-            result3 = self.lib.get_status(self.id_z, byref(stat))
-            if result1 == Result.Ok and result2 == Result.Ok and result3 == Result.Ok:
-                self.lib.msec_sleep(10)
+        for device_id in self._iter_device_ids():
+            self.lib.command_wait_for_stop(device_id, 100)
 
     def wait_for_stop_x(self):
+        self._require_device(self.id_x, "X")
         self.lib.command_wait_for_stop(self.id_x, 100)
 
     def wait_for_stop_y(self):
+        self._require_device(self.id_y, "Y")
         self.lib.command_wait_for_stop(self.id_y, 100)
 
     def wait_for_stop_z(self):
+        self._require_device(self.id_z, "Z")
         self.lib.command_wait_for_stop(self.id_z, 100)
+
+    def wait_for_stop_rotation(self):
+        self._require_device(self.id_rotation, "Rotation")
+        self.lib.command_wait_for_stop(self.id_rotation, 100)
 
     def move_left(self, device_id):
         """
@@ -241,13 +288,16 @@ class ScannerDevice:
         """
         self.lib.command_right(device_id)
 
-    def move_axis(self, device_id, position):
+    def move_axis(self, device_id, position, calibration=None):
         """
         Move to the specified coordinate on the x-axis.
         :param device_id: the device id.
         :param position: the position of the destination.
         """
-        self.lib.command_move_calb(device_id, c_float(position), byref(self.user_unit))
+        self._require_device(device_id, "Selected")
+        self.lib.command_move_calb(
+            device_id, c_float(position), byref(self._get_calibration(calibration))
+        )
         self.wait_for_stop()
 
     def move_x(self, position):
@@ -255,6 +305,7 @@ class ScannerDevice:
         Move to the specified coordinate on the x-axis.
         :param position: the position of the destination.
         """
+        self._require_device(self.id_x, "X")
         self.lib.command_move_calb(self.id_x, c_float(position), byref(self.user_unit))
         self.wait_for_stop_x()
 
@@ -263,6 +314,7 @@ class ScannerDevice:
         Move to the specified coordinate on the y-axis.
         :param position: the position of the destination.
         """
+        self._require_device(self.id_y, "Y")
         self.lib.command_move_calb(self.id_y, c_float(position), byref(self.user_unit))
         self.wait_for_stop_y()
 
@@ -271,6 +323,7 @@ class ScannerDevice:
         Move to the specified coordinate on the z-axis.
         :param position: the position of the destination
         """
+        self._require_device(self.id_z, "Z")
         self.lib.command_move_calb(self.id_z, c_float(position), byref(self.user_unit))
         self.wait_for_stop_z()
 
@@ -279,15 +332,30 @@ class ScannerDevice:
         Start movement to the specified Z coordinate without waiting for completion.
         :param position: destination position in user units.
         """
+        self._require_device(self.id_z, "Z")
         self.lib.command_move_calb(self.id_z, c_float(position), byref(self.user_unit))
 
-    def shift_axis(self, device_id, distance):
+    def move_rotation(self, position):
+        """
+        Move rotation axis to the specified angle in degrees.
+        :param position: destination angle in degrees.
+        """
+        self._require_device(self.id_rotation, "Rotation")
+        self.lib.command_move_calb(
+            self.id_rotation, c_float(position), byref(self.rotation_unit)
+        )
+        self.wait_for_stop_rotation()
+
+    def shift_axis(self, device_id, distance, calibration=None):
         """
         Shift by the specified offset coordinates on the x-axis.
         :param device_id: the device id.
         :param distance: size of the offset in user units.
         """
-        self.lib.command_movr_calb(device_id, c_float(distance), byref(self.user_unit))
+        self._require_device(device_id, "Selected")
+        self.lib.command_movr_calb(
+            device_id, c_float(distance), byref(self._get_calibration(calibration))
+        )
         self.wait_for_stop()
 
     def shift_x(self, distance):
@@ -295,6 +363,7 @@ class ScannerDevice:
         Shift by the specified offset coordinates on the x-axis.
         :param distance: size of the offset in user units.
         """
+        self._require_device(self.id_x, "X")
         self.lib.command_movr_calb(self.id_x, c_float(distance), byref(self.user_unit))
         self.wait_for_stop()
 
@@ -303,6 +372,7 @@ class ScannerDevice:
         Shift by the specified offset coordinates on the y-axis.
         :param distance: size of the offset in user units.
         """
+        self._require_device(self.id_y, "Y")
         self.lib.command_movr_calb(self.id_y, c_float(distance), byref(self.user_unit))
         self.wait_for_stop()
 
@@ -311,8 +381,20 @@ class ScannerDevice:
         Shift by the specified offset coordinates.
         :param distance: size of the offset in user units.
         """
+        self._require_device(self.id_z, "Z")
         self.lib.command_movr_calb(self.id_z, c_float(distance), byref(self.user_unit))
         self.wait_for_stop()
+
+    def shift_rotation(self, distance):
+        """
+        Shift rotation axis by the specified angle in degrees.
+        :param distance: angle offset in degrees.
+        """
+        self._require_device(self.id_rotation, "Rotation")
+        self.lib.command_movr_calb(
+            self.id_rotation, c_float(distance), byref(self.rotation_unit)
+        )
+        self.wait_for_stop_rotation()
 
     def set_home_settings(self, device_id, fast_home, slow_home, home_delta):
         """
@@ -338,9 +420,14 @@ class ScannerDevice:
         """
         Go home.
         """
-        self.move_x(0)
-        self.move_y(0)
-        self.move_z(0)
+        if self.id_x:
+            self.move_x(0)
+        if self.id_y:
+            self.move_y(0)
+        if self.id_z:
+            self.move_z(0)
+        if self.id_rotation:
+            self.move_rotation(0)
         self.wait_for_stop()
 
     def set_axis_limits(self, device_id, min_value, max_value):
@@ -377,7 +464,7 @@ class ScannerDevice:
             logger.info(f"Limits set for axis {device_id}")
 
     def get_axis_limits(self):
-        device_list = [self.id_x, self.id_y, self.id_z]
+        device_list = self._iter_device_ids()
         settings = []
         edges_settings_t()
         for item in device_list:
@@ -418,9 +505,9 @@ class ScannerDevice:
         """
         Close devices.
         """
-        self.lib.close_device(byref(cast(self.id_x, POINTER(c_int))))
-        self.lib.close_device(byref(cast(self.id_y, POINTER(c_int))))
-        self.lib.close_device(byref(cast(self.id_z, POINTER(c_int))))
+        for device_id in (self.id_x, self.id_y, self.id_z, self.id_rotation):
+            if device_id:
+                self.lib.close_device(byref(cast(device_id, POINTER(c_int))))
 
     def initial_setup(
         self, max_linear_speed: float, acceleration: float, deceleration: float

@@ -67,9 +67,7 @@ class State:
     measure_vna_start_time: float = float(settings.value("Measure/vna_start_time", 0.0))
     measure_vna_stop_time: float = float(settings.value("Measure/vna_stop_time", 0.1))
     measure_vna_bandwidth: int = int(settings.value("Measure/vna_bandwidth", 1000))
-    measure_vna_average_count: int = int(
-        settings.value("Measure/vna_average_count", 1)
-    )
+    measure_vna_average_count: int = int(settings.value("Measure/vna_average_count", 1))
     measure_vna_average_enabled: bool = (
         settings.value("Measure/vna_average_enabled", "false") == "true"
     )
@@ -84,6 +82,10 @@ class State:
     scanner_x_port: str = settings.value("Scanner/x_port", "COM5")
     scanner_y_port: str = settings.value("Scanner/y_port", "COM6")
     scanner_z_port: str = settings.value("Scanner/z_port", "COM7")
+    scanner_rotation_port: str = settings.value("Scanner/rotation_port", "COM8")
+    scanner_rotation_degrees_per_step: float = float(
+        settings.value("Scanner/rotation_degrees_per_step", 0.01)
+    )
 
     # VNA device configuration
     vna_host: str = settings.value("VNA/host", "169.254.106.189")
@@ -127,6 +129,11 @@ class State:
         cls.settings.setValue("Scanner/x_port", cls.scanner_x_port)
         cls.settings.setValue("Scanner/y_port", cls.scanner_y_port)
         cls.settings.setValue("Scanner/z_port", cls.scanner_z_port)
+        cls.settings.setValue("Scanner/rotation_port", cls.scanner_rotation_port)
+        cls.settings.setValue(
+            "Scanner/rotation_degrees_per_step",
+            cls.scanner_rotation_degrees_per_step,
+        )
 
         cls.settings.setValue("VNA/host", cls.vna_host)
         cls.settings.setValue("VNA/port", cls.vna_port)
@@ -188,6 +195,8 @@ class State:
             x_port=cls.scanner_x_port,
             y_port=cls.scanner_y_port,
             z_port=cls.scanner_z_port,
+            rotation_port=cls.scanner_rotation_port,
+            rotation_degrees_per_step=cls.scanner_rotation_degrees_per_step,
         )
         status = cls.scanner.connect_devices()
         if not status:

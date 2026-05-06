@@ -264,7 +264,9 @@ class MeasureThread(QThread):
         full_data["complex_imag"][step_y][step_x][z_idx] = mean_imag
         full_data["z_request"][step_y][step_x][z_idx] = z_request
         full_data["z_response"][step_y][step_x][z_idx] = z_response
-        full_data["vna_latency_ms"][step_y][step_x][z_idx] = float(meas_duration * 1000.0)
+        full_data["vna_latency_ms"][step_y][step_x][z_idx] = float(
+            meas_duration * 1000.0
+        )
 
         # Emit only lightweight data needed by live plots.
         self.data.emit(preview_data)
@@ -413,6 +415,7 @@ class MeasureThread(QThread):
             freq_points = np.min(
                 [self.generator_freq_points_1, self.generator_freq_points_2]
             )
+
             def _normalize_amps(amps):
                 if type(amps) == list:
                     if len(amps) >= freq_points:
@@ -796,9 +799,7 @@ class MeasureWidget(QGroupBox):
         g_layout.addWidget(
             QLabel("Z fly speed", self), 4, 2, alignment=Qt.AlignmentFlag.AlignLeft
         )
-        g_layout.addWidget(
-            self.z_fly_speed, 4, 3, alignment=Qt.AlignmentFlag.AlignLeft
-        )
+        g_layout.addWidget(self.z_fly_speed, 4, 3, alignment=Qt.AlignmentFlag.AlignLeft)
 
         f_layout.addRow("VNA points", self.vna_points)
         f_layout.addRow("VNA start time, s", self.vna_start_time)
@@ -856,6 +857,18 @@ class MeasureWidget(QGroupBox):
             self.z_snake_check.setEnabled(True)
 
     def start_measure(self):
+        if not State.scanner:
+            logger.warning("Scanner is not initialized!")
+            return
+        if self.x_check.isChecked() and not State.scanner.id_x:
+            logger.warning("X sweep is enabled, but X axis is not initialized!")
+            return
+        if self.y_check.isChecked() and not State.scanner.id_y:
+            logger.warning("Y sweep is enabled, but Y axis is not initialized!")
+            return
+        if self.z_check.isChecked() and not State.scanner.id_z:
+            logger.warning("Z sweep is enabled, but Z axis is not initialized!")
+            return
         if self.generator_freq_points_2.value() != self.generator_freq_points_1.value():
             logger.warning("Frequency points must be equal!")
             return
