@@ -5,6 +5,7 @@ from interface.init_generator_widget import InitGeneratorWidget
 from interface.init_scanner_widget import InitScannerWidget
 from interface.init_vna_widget import InitVnaWidget
 from interface.measure_widget import MeasureWidget
+from interface.rotation_measure_widget import RotationMeasureWidget
 from interface.scanner_position_monitor_widget import ScannerPositionMonitorWidget
 from store.config import SignalGeneratorConfig1, SignalGeneratorConfig2
 
@@ -49,9 +50,13 @@ class ManagerWidget(QWidget):
         # Create the Data tab
         data_tab = DataTable()
 
+        # Create the Rotation Test tab
+        rotation_tab = RotationMeasureWidget(self)
+
         # Add tabs to the tab widget
         tab_widget.addTab(setup_scroll_area, "Setup")
         tab_widget.addTab(measure_scroll_area, "Measure")
+        tab_widget.addTab(rotation_tab, "Rotation Test")
         tab_widget.addTab(data_tab, "Data")
 
         # Set the tab widget as the main layout

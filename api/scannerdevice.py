@@ -346,6 +346,16 @@ class ScannerDevice:
         )
         self.wait_for_stop_rotation()
 
+    def move_rotation_async(self, position):
+        """
+        Start movement to the specified rotation angle without waiting for completion.
+        :param position: destination angle in degrees.
+        """
+        self._require_device(self.id_rotation, "Rotation")
+        self.lib.command_move_calb(
+            self.id_rotation, c_float(position), byref(self.rotation_unit)
+        )
+
     def shift_axis(self, device_id, distance, calibration=None):
         """
         Shift by the specified offset coordinates on the x-axis.
