@@ -760,12 +760,12 @@ class MeasureWidget(QGroupBox):
         self.generator_amps_1.setText(State.generator_amps_1)
 
         self.generator_freq_start_2 = DoubleSpinBox(self)
-        self.generator_freq_start_2.setRange(1, 290)
+        self.generator_freq_start_2.setRange(1, 1000)
         self.generator_freq_start_2.setDecimals(5)
         self.generator_freq_start_2.setValue(State.generator_freq_start_2)
 
         self.generator_freq_stop_2 = DoubleSpinBox(self)
-        self.generator_freq_stop_2.setRange(1, 290)
+        self.generator_freq_stop_2.setRange(1, 1000)
         self.generator_freq_stop_2.setDecimals(5)
         self.generator_freq_stop_2.setValue(State.generator_freq_stop_2)
 
