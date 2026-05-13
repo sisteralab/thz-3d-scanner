@@ -484,6 +484,8 @@ class MeasureThread(QThread):
                 if amp_2 is not None:
                     State.generator_2.set_power(amp_2)
 
+                time.sleep(0.5)  # Allow generators to stabilize before measurement.
+
                 full_data = {
                     "freq_1": freq_1,
                     "amp_1": amp_1,
