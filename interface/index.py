@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from interface.log import LogHandler, LogWidget
+from interface.memory_monitor import MemoryMonitor
 from interface.manager_widget import ManagerWidget
 from interface.plot_widgets import (
     AmplitudePlotWidget,
@@ -47,13 +48,18 @@ class MainWindow(QMainWindow):
         )
 
         # Create phase pyqtgraph widget
-        self.phase_widget = PhasePlotWidget(reference_controller=self.reference_controller)
+        self.phase_widget = PhasePlotWidget(
+            reference_controller=self.reference_controller
+        )
         self.reference_widget = ComplexReferenceWidget(self.reference_controller)
         self.y_slice_widget = YSliceSelectorWidget()
-        self.reference_controller.corrected_data_ready.connect(self._apply_corrected_data)
+        self.reference_controller.corrected_data_ready.connect(
+            self._apply_corrected_data
+        )
         self.y_slice_widget.y_index_changed.connect(self._on_y_slice_changed)
 
         self.log_widget = LogWidget(self)
+        self.memory_monitor = MemoryMonitor(self)
 
         # Create a horizontal layout for both plots
         plots_layout = QHBoxLayout()
@@ -64,6 +70,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.reference_widget)
         left_layout.addLayout(plots_layout)
         left_layout.addWidget(self.log_widget)
+        left_layout.addWidget(self.memory_monitor)
 
         self.layout.addLayout(
             left_layout, stretch=2
@@ -86,10 +93,10 @@ class MainWindow(QMainWindow):
 
         # Initialize with default data
 
-        data = np.random.normal(size=(200, 100))
+        data = np.random.normal(size=(200, 100)).astype(np.float32)
         data[20:80, 20:80] += 2.0
-        data = pg.gaussianFilter(data, (3, 3))
-        data += np.random.normal(size=(200, 100)) * 0.1
+        data = pg.gaussianFilter(data, (3, 3)).astype(np.float32)
+        data += np.random.normal(size=(200, 100)).astype(np.float32) * 0.1
 
         self.update_plot(
             {
@@ -102,6 +109,9 @@ class MainWindow(QMainWindow):
 
     def update_plot(self, data):
         """Update the visualization with new measurement data"""
+        # Clean up heavy raw data to reduce RAM usage
+        if isinstance(data, dict) and "vna_data" in data:
+            data = {k: v for k, v in data.items() if k != "vna_data"}
         self._source_data = data
         y_axis = self._extract_y_axis(data)
         self.y_slice_widget.set_y_values(y_axis)

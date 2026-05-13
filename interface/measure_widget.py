@@ -63,6 +63,7 @@ class MeasureThread(QThread):
         use_z_snake_pattern=True,
         use_z_fly_mode=False,
         z_fly_speed=2.0,
+        plot_update_hz=10.0,
         x_movement_delay=100,
         y_movement_delay=150,
         z_movement_delay=200,
@@ -94,6 +95,8 @@ class MeasureThread(QThread):
         self.use_z_snake_pattern = use_z_snake_pattern
         self.use_z_fly_mode = use_z_fly_mode
         self.z_fly_speed = z_fly_speed
+        self.plot_update_hz = max(0.01, float(plot_update_hz))
+        self._last_preview_emit_time = 0.0
         self.x_movement_delay = x_movement_delay
         self.y_movement_delay = y_movement_delay
         self.z_movement_delay = z_movement_delay
@@ -107,6 +110,23 @@ class MeasureThread(QThread):
 
         self.measure = MeasureModel.objects.create(data=[])
         self.measure.save(False)
+
+    def _preview_emit_interval_s(self):
+        update_hz = max(
+            0.01,
+            float(getattr(State, "plot_update_hz", self.plot_update_hz)),
+        )
+        return 1.0 / update_hz
+
+    def _emit_preview_data(self, preview_data, force=False):
+        now = time.monotonic()
+        if (
+            not force
+            and now - self._last_preview_emit_time < self._preview_emit_interval_s()
+        ):
+            return
+        self._last_preview_emit_time = now
+        self.data.emit(preview_data)
 
     def _configure_vna(self):
         State.vna.set_parameter("BA")
@@ -268,8 +288,8 @@ class MeasureThread(QThread):
             meas_duration * 1000.0
         )
 
-        # Emit only lightweight data needed by live plots.
-        self.data.emit(preview_data)
+        # Emit only lightweight data needed by live plots, throttled to avoid GUI backlog.
+        self._emit_preview_data(preview_data)
 
         self._step_counter += 1
         self._update_progress()
@@ -579,6 +599,7 @@ class MeasureThread(QThread):
                         break
 
                 if freq_has_data:
+                    self._emit_preview_data(preview_data, force=True)
                     self.measure.data.append(full_data)
                 if stop_requested:
                     break
@@ -712,6 +733,14 @@ class MeasureWidget(QGroupBox):
         self.vna_average_enabled.toggled.connect(self.vna_average_count.setEnabled)
         self.vna_average_count.setEnabled(self.vna_average_enabled.isChecked())
 
+        self.plot_update_hz = QDoubleSpinBox(self)
+        self.plot_update_hz.setRange(0.01, 60.0)
+        self.plot_update_hz.setDecimals(2)
+        self.plot_update_hz.setSingleStep(0.25)
+        self.plot_update_hz.setValue(State.plot_update_hz)
+        self.plot_update_hz.setToolTip("How often live amplitude/phase images update")
+        self.plot_update_hz.valueChanged.connect(self.on_plot_update_hz_changed)
+
         self.generator_freq_start_1 = DoubleSpinBox(self)
         self.generator_freq_start_1.setRange(1, 290)
         self.generator_freq_start_1.setDecimals(5)
@@ -807,6 +836,7 @@ class MeasureWidget(QGroupBox):
         f_layout.addRow("VNA bandwidth, Hz", self.vna_bandwidth)
         f_layout.addRow("VNA average", self.vna_average_enabled)
         f_layout.addRow("VNA average count", self.vna_average_count)
+        f_layout.addRow("Plot update, Hz", self.plot_update_hz)
 
         f_layout.addRow(HLine(self))
 
@@ -856,6 +886,10 @@ class MeasureWidget(QGroupBox):
         else:
             self.z_snake_check.setEnabled(True)
 
+    @staticmethod
+    def on_plot_update_hz_changed(value):
+        State.plot_update_hz = float(value)
+
     def start_measure(self):
         if not State.scanner:
             logger.warning("Scanner is not initialized!")
@@ -903,6 +937,7 @@ class MeasureWidget(QGroupBox):
         State.measure_vna_bandwidth = self.vna_bandwidth.value()
         State.measure_vna_average_enabled = self.vna_average_enabled.isChecked()
         State.measure_vna_average_count = self.vna_average_count.value()
+        State.plot_update_hz = self.plot_update_hz.value()
 
         State.x_start = self.x_start.value()
         State.x_stop = self.x_stop.value()
@@ -971,6 +1006,7 @@ class MeasureWidget(QGroupBox):
             use_z_snake_pattern=self.z_snake_check.isChecked(),
             use_z_fly_mode=self.z_fly_check.isChecked(),
             z_fly_speed=self.z_fly_speed.value(),
+            plot_update_hz=State.plot_update_hz,
             x_movement_delay=State.x_movement_delay,
             y_movement_delay=State.y_movement_delay,
             z_movement_delay=State.z_movement_delay,

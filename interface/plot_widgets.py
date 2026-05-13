@@ -1,7 +1,7 @@
 import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtGui
-from PySide6.QtCore import QObject, QLoggingCategory, Qt, Signal
+from PySide6.QtCore import QObject, QLoggingCategory, Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from store.state import State
 
 
 def normalize_phase(phase_data):
@@ -293,7 +295,10 @@ class ComplexReferenceController(QObject):
             "reference_real": reference_real,
             "reference_imag": reference_imag,
             "reference_amplitude_db": float(
-                20 * np.log10(np.clip(np.hypot(reference_real, reference_imag), 1e-12, None))
+                20
+                * np.log10(
+                    np.clip(np.hypot(reference_real, reference_imag), 1e-12, None)
+                )
             ),
             "reference_phase_rad": float(np.arctan2(reference_imag, reference_real)),
         }
@@ -373,7 +378,11 @@ class ComplexReferenceWidget(QWidget):
             preview = []
             for point in preview_points:
                 preview.append(f"({point['x']:.2f},{point['z']:.2f})")
-            tail = f" +{count - len(preview_points)}" if count > len(preview_points) else ""
+            tail = (
+                f" +{count - len(preview_points)}"
+                if count > len(preview_points)
+                else ""
+            )
             self.points_label.setText(f"P[{count}]: " + ", ".join(preview) + tail)
         else:
             self.points_label.setText("P[0]: none")
@@ -454,7 +463,9 @@ class YSliceSelectorWidget(QWidget):
         self._updating = True
         self._current_index = idx
         self.slider.setValue(idx)
-        self.value_spin.setRange(float(np.min(self._y_values)), float(np.max(self._y_values)))
+        self.value_spin.setRange(
+            float(np.min(self._y_values)), float(np.max(self._y_values))
+        )
         self.value_spin.setValue(float(self._y_values[idx]))
         self.index_label.setText(f"{idx + 1}/{self._y_values.size}")
         self._updating = False
@@ -559,7 +570,15 @@ class BasePlotWidget(QWidget):
         self.z_axis = np.array([])
         self._last_markers_render_key = None
 
-        self.roi.sigRegionChanged.connect(self.update_roi_plot)
+        # Throttle updates to limit FPS and reduce CPU/GPU load
+        self._update_timer = QTimer(self)
+        self._update_timer.setInterval(self._update_interval_ms())
+        self._update_timer.setSingleShot(True)
+        self._update_timer.timeout.connect(self._perform_deferred_updates)
+        self._pending_visualization_update = False
+        self._pending_roi_update = False
+
+        self.roi.sigRegionChanged.connect(self._schedule_roi_update)
         self.plot_item.scene().sigMouseMoved.connect(self.mouse_moved)
         self.plot_item.scene().sigMouseClicked.connect(self.mouse_clicked)
 
@@ -567,6 +586,11 @@ class BasePlotWidget(QWidget):
             self.reference_controller.selection_changed.connect(
                 self.update_reference_points
             )
+
+    @staticmethod
+    def _update_interval_ms():
+        update_hz = max(0.01, float(getattr(State, "plot_update_hz", 10.0)))
+        return max(1, int(round(1000 / update_hz)))
 
     @staticmethod
     def _axis_edges(axis):
@@ -695,6 +719,27 @@ class BasePlotWidget(QWidget):
         self.reference_points_scatter.setData(x=scatter_x, y=scatter_z)
 
     def update_visualization(self):
+        """Schedule a throttled visualization update."""
+        if self.current_data is None:
+            return
+        # Throttle updates to avoid excessive redraws
+        if self._pending_visualization_update:
+            return
+        self._pending_visualization_update = True
+        self._update_timer.setInterval(self._update_interval_ms())
+        self._update_timer.start()
+
+    def _perform_deferred_updates(self):
+        """Perform all deferred updates (visualization and ROI) in one batch."""
+        if self._pending_visualization_update:
+            self._pending_visualization_update = False
+            self._update_visualization_internal()
+        if self._pending_roi_update:
+            self._pending_roi_update = False
+            self.update_roi_plot()
+
+    def _update_visualization_internal(self):
+        """Internal visualization update (called by throttle timer)."""
         if self.current_data is None:
             return
 
@@ -744,7 +789,15 @@ class BasePlotWidget(QWidget):
         transform.scale(float(x_step), float(z_step))
         self.image_item.setTransform(transform)
 
-        self.update_roi_plot()
+        self._schedule_roi_update()
+
+    def _schedule_roi_update(self):
+        """Schedule a throttled ROI plot update."""
+        if self._pending_roi_update:
+            return
+        self._pending_roi_update = True
+        self._update_timer.setInterval(self._update_interval_ms())
+        self._update_timer.start()
 
     def update_roi_plot(self):
         if self.display_data is None:
@@ -797,7 +850,9 @@ class BasePlotWidget(QWidget):
 class AmplitudePlotWidget(BasePlotWidget):
     """Widget for amplitude visualization."""
 
-    def __init__(self, parent=None, reference_controller: ComplexReferenceController = None):
+    def __init__(
+        self, parent=None, reference_controller: ComplexReferenceController = None
+    ):
         super().__init__(
             parent,
             title="Amplitude",
@@ -811,7 +866,9 @@ class AmplitudePlotWidget(BasePlotWidget):
 class PhasePlotWidget(BasePlotWidget):
     """Widget for phase visualization."""
 
-    def __init__(self, parent=None, reference_controller: ComplexReferenceController = None):
+    def __init__(
+        self, parent=None, reference_controller: ComplexReferenceController = None
+    ):
         super().__init__(
             parent,
             title="Phase",
@@ -830,8 +887,12 @@ class DataVisualizationWindow(QWidget):
 
         freq_1 = data.get("freq_1")
         freq_2 = data.get("freq_2")
-        freq_1_text = f"{freq_1:.5f}" if isinstance(freq_1, (int, float, np.floating)) else "N/A"
-        freq_2_text = f"{freq_2:.5f}" if isinstance(freq_2, (int, float, np.floating)) else "N/A"
+        freq_1_text = (
+            f"{freq_1:.5f}" if isinstance(freq_1, (int, float, np.floating)) else "N/A"
+        )
+        freq_2_text = (
+            f"{freq_2:.5f}" if isinstance(freq_2, (int, float, np.floating)) else "N/A"
+        )
 
         self.setWindowTitle(
             f"{comment} - Freq1: {freq_1_text} GHz, Freq2: {freq_2_text} GHz"
@@ -839,7 +900,9 @@ class DataVisualizationWindow(QWidget):
         self.resize(1200, 760)
 
         self.reference_controller = ComplexReferenceController(self)
-        self.reference_controller.corrected_data_ready.connect(self._apply_corrected_data)
+        self.reference_controller.corrected_data_ready.connect(
+            self._apply_corrected_data
+        )
         self._source_data = None
         self._current_y_index = 0
 
@@ -869,7 +932,9 @@ class DataVisualizationWindow(QWidget):
         self.amplitude_widget = AmplitudePlotWidget(
             reference_controller=self.reference_controller
         )
-        self.phase_widget = PhasePlotWidget(reference_controller=self.reference_controller)
+        self.phase_widget = PhasePlotWidget(
+            reference_controller=self.reference_controller
+        )
         plots_layout.addWidget(self.amplitude_widget, stretch=1)
         plots_layout.addWidget(self.phase_widget, stretch=1)
         main_layout.addLayout(plots_layout, stretch=1)

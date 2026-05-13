@@ -71,6 +71,7 @@ class State:
     measure_vna_average_enabled: bool = (
         settings.value("Measure/vna_average_enabled", "false") == "true"
     )
+    plot_update_hz: float = float(settings.value("Measure/plot_update_hz", 10.0))
 
     # Movement delays in milliseconds
     x_movement_delay: int = int(settings.value("Measure/x_movement_delay", 100))
@@ -119,6 +120,7 @@ class State:
         cls.settings.setValue(
             "Measure/vna_average_enabled", cls.measure_vna_average_enabled
         )
+        cls.settings.setValue("Measure/plot_update_hz", cls.plot_update_hz)
 
         cls.settings.setValue("Measure/x_movement_delay", cls.x_movement_delay)
         cls.settings.setValue("Measure/y_movement_delay", cls.y_movement_delay)
