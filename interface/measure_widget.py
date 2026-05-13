@@ -742,17 +742,17 @@ class MeasureWidget(QGroupBox):
         self.plot_update_hz.valueChanged.connect(self.on_plot_update_hz_changed)
 
         self.generator_freq_start_1 = DoubleSpinBox(self)
-        self.generator_freq_start_1.setRange(1, 290)
+        self.generator_freq_start_1.setRange(1, 1000)
         self.generator_freq_start_1.setDecimals(5)
         self.generator_freq_start_1.setValue(State.generator_freq_start_1)
 
         self.generator_freq_stop_1 = DoubleSpinBox(self)
-        self.generator_freq_stop_1.setRange(1, 290)
+        self.generator_freq_stop_1.setRange(1, 1000)
         self.generator_freq_stop_1.setDecimals(5)
         self.generator_freq_stop_1.setValue(State.generator_freq_stop_1)
 
         self.generator_freq_points_1 = QSpinBox(self)
-        self.generator_freq_points_1.setRange(1, 290)
+        self.generator_freq_points_1.setRange(1, 10000)
         self.generator_freq_points_1.setValue(State.generator_freq_points_1)
         self.generator_freq_points_1.valueChanged.connect(self.update_approx_time)
 
@@ -770,7 +770,7 @@ class MeasureWidget(QGroupBox):
         self.generator_freq_stop_2.setValue(State.generator_freq_stop_2)
 
         self.generator_freq_points_2 = QSpinBox(self)
-        self.generator_freq_points_2.setRange(1, 290)
+        self.generator_freq_points_2.setRange(1, 10000)
         self.generator_freq_points_2.setValue(State.generator_freq_points_2)
         self.generator_freq_points_2.valueChanged.connect(self.update_approx_time)
         self.generator_amps_2 = QLineEdit(self)
