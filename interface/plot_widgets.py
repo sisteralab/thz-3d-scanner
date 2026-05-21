@@ -485,6 +485,92 @@ class YSliceSelectorWidget(QWidget):
         self.set_index(idx, emit_signal=True)
 
 
+class RotationSliceSelectorWidget(QWidget):
+    """Rotation selector with numeric input and slider."""
+
+    rotation_index_changed = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rotation_values = np.array([0.0], dtype=float)
+        self._updating = False
+        self._current_index = 0
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.title_label = QLabel("Rotation:")
+        self.value_spin = QDoubleSpinBox()
+        self.value_spin.setDecimals(4)
+        self.value_spin.setKeyboardTracking(False)
+        self.value_spin.setSingleStep(1.0)
+        self.value_spin.setMinimumWidth(120)
+        self.value_spin.setSuffix(" deg")
+
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.setMaximum(0)
+        self.index_label = QLabel("0/0")
+        self.index_label.setMinimumWidth(50)
+
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.value_spin)
+        layout.addWidget(self.slider, stretch=1)
+        layout.addWidget(self.index_label)
+        self.setLayout(layout)
+
+        self.value_spin.valueChanged.connect(self._on_spin_changed)
+        self.slider.valueChanged.connect(self._on_slider_changed)
+        self.setVisible(False)
+
+    def set_rotation_values(self, rotation_values):
+        values = np.asarray(rotation_values, dtype=float)
+        if values.size == 0:
+            values = np.array([0.0], dtype=float)
+        self._rotation_values = values
+        self.slider.setMaximum(max(values.size - 1, 0))
+        self.setVisible(values.size > 1)
+        self.set_index(
+            min(self._current_index, values.size - 1),
+            emit_signal=False,
+        )
+
+    def set_index(self, index, emit_signal=True):
+        if self._rotation_values.size == 0:
+            return
+
+        idx = int(np.clip(index, 0, self._rotation_values.size - 1))
+        if idx == self._current_index and emit_signal:
+            self.rotation_index_changed.emit(idx)
+            return
+
+        self._updating = True
+        self._current_index = idx
+        self.slider.setValue(idx)
+        self.value_spin.setRange(
+            float(np.min(self._rotation_values)),
+            float(np.max(self._rotation_values)),
+        )
+        self.value_spin.setValue(float(self._rotation_values[idx]))
+        self.index_label.setText(f"{idx + 1}/{self._rotation_values.size}")
+        self._updating = False
+
+        if emit_signal:
+            self.rotation_index_changed.emit(idx)
+
+    def _on_slider_changed(self, index):
+        if self._updating:
+            return
+        self.set_index(index, emit_signal=True)
+
+    def _on_spin_changed(self, value):
+        if self._updating or self._rotation_values.size == 0:
+            return
+        idx = int(np.argmin(np.abs(self._rotation_values - float(value))))
+        self.set_index(idx, emit_signal=True)
+
+
 class BasePlotWidget(QWidget):
     """Base widget for pyqtgraph visualization with hover info."""
 
@@ -885,8 +971,10 @@ class DataVisualizationWindow(QWidget):
     def __init__(self, data, comment="", parent=None):
         super().__init__(parent)
 
-        freq_1 = data.get("freq_1")
-        freq_2 = data.get("freq_2")
+        title_data = data[0] if isinstance(data, list) and data else data
+        title_data = title_data if isinstance(title_data, dict) else {}
+        freq_1 = title_data.get("freq_1")
+        freq_2 = title_data.get("freq_2")
         freq_1_text = (
             f"{freq_1:.5f}" if isinstance(freq_1, (int, float, np.floating)) else "N/A"
         )
@@ -905,6 +993,7 @@ class DataVisualizationWindow(QWidget):
         )
         self._source_data = None
         self._current_y_index = 0
+        self._current_rotation_index = 0
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(5, 5, 5, 5)
@@ -919,6 +1008,12 @@ class DataVisualizationWindow(QWidget):
         controls_layout.addWidget(self.drop_raw_checkbox)
         controls_layout.addStretch(1)
         main_layout.addLayout(controls_layout)
+
+        self.rotation_slice_widget = RotationSliceSelectorWidget()
+        self.rotation_slice_widget.rotation_index_changed.connect(
+            self._on_rotation_slice_changed
+        )
+        main_layout.addWidget(self.rotation_slice_widget)
 
         self.y_slice_widget = YSliceSelectorWidget()
         self.y_slice_widget.y_index_changed.connect(self._on_y_slice_changed)
@@ -967,9 +1062,45 @@ class DataVisualizationWindow(QWidget):
             y_axis = np.arange(y_len, dtype=float)
         return y_axis
 
+    @staticmethod
+    def _extract_rotation_axis(data):
+        if isinstance(data, list):
+            values = []
+            for item in data:
+                if isinstance(item, dict):
+                    values.append(float(item.get("rotation_angle", 0.0)))
+            if values:
+                return np.asarray(values, dtype=float)
+        if isinstance(data, dict) and "rotation_angle" in data:
+            return np.asarray([float(data.get("rotation_angle", 0.0))], dtype=float)
+        return np.array([0.0], dtype=float)
+
+    def _current_rotation_data(self):
+        if isinstance(self._source_data, list):
+            if not self._source_data:
+                return {}
+            idx = int(
+                np.clip(
+                    self._current_rotation_index,
+                    0,
+                    len(self._source_data) - 1,
+                )
+            )
+            return self._source_data[idx]
+        return self._source_data
+
     def _on_drop_raw_toggled(self, _checked):
         if self._source_data is None:
             return
+        self._push_current_slice()
+
+    def _on_rotation_slice_changed(self, rotation_index):
+        self._current_rotation_index = int(rotation_index)
+        current_data = self._current_rotation_data()
+        y_axis = self._extract_y_axis(current_data)
+        self.y_slice_widget.set_y_values(y_axis)
+        self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
+        self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)
         self._push_current_slice()
 
     def _on_y_slice_changed(self, y_index):
@@ -979,13 +1110,25 @@ class DataVisualizationWindow(QWidget):
     def _push_current_slice(self):
         if self._source_data is None:
             return
-        view_data = self._prepare_view_data(self._source_data)
+        current_data = self._current_rotation_data()
+        view_data = self._prepare_view_data(current_data)
         slice_data = extract_xz_slice(view_data, self._current_y_index)
         self.reference_controller.set_raw_data(slice_data)
 
     def update_data(self, data):
         self._source_data = data
-        y_axis = self._extract_y_axis(data)
+        rotation_axis = self._extract_rotation_axis(data)
+        self.rotation_slice_widget.set_rotation_values(rotation_axis)
+        self._current_rotation_index = int(
+            np.clip(self._current_rotation_index, 0, rotation_axis.size - 1)
+        )
+        self.rotation_slice_widget.set_index(
+            self._current_rotation_index,
+            emit_signal=False,
+        )
+
+        current_data = self._current_rotation_data()
+        y_axis = self._extract_y_axis(current_data)
         self.y_slice_widget.set_y_values(y_axis)
         self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
         self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)

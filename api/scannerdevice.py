@@ -1,4 +1,5 @@
 import logging
+import time
 
 import loader
 from pyximc import *
@@ -122,6 +123,16 @@ class ScannerDevice:
         if not device_id:
             raise RuntimeError(f"{axis_name} axis is not initialized")
 
+    @staticmethod
+    def _result_name(result):
+        for name in ("Ok", "Error", "NotImplemented", "ValueError", "NoDevice"):
+            if getattr(Result, name, None) == result:
+                return name
+        return str(result)
+
+    def _raise_result_error(self, message, result):
+        raise RuntimeError(f"{message}: {self._result_name(result)} ({result})")
+
     def connect_devices(self) -> bool:
         """
         Open a device with OS uri and return identifier of the device which can be used in calls.
@@ -139,6 +150,24 @@ class ScannerDevice:
                 exc_info=True,
             )
         return self.has_connected_devices()
+
+    def _command_move_calb_checked(
+        self,
+        axis_name: str,
+        position,
+        calibration,
+        async_move: bool = False,
+        timeout_s: float = 300.0,
+    ):
+        device_id = getattr(self, f"id_{axis_name.lower()}", None)
+        self._require_device(device_id, axis_name)
+        result = self.lib.command_move_calb(
+            device_id, c_float(position), byref(calibration)
+        )
+        if result != Result.Ok:
+            self._raise_result_error(f"Failed to move {axis_name} axis", result)
+        if not async_move:
+            self.wait_for_stop_device(device_id, timeout_s=timeout_s)
 
     def set_units(self):
         """
@@ -256,23 +285,59 @@ class ScannerDevice:
         Waiting for the movement to complete.
         """
         for device_id in self._iter_device_ids():
-            self.lib.command_wait_for_stop(device_id, 100)
+            self.wait_for_stop_device(device_id)
 
-    def wait_for_stop_x(self):
+    def is_moving(self, device_id) -> bool:
+        self._require_device(device_id, "Selected")
+        stat = status_t()
+        result = self.lib.get_status(device_id, byref(stat))
+        if result != Result.Ok:
+            raise RuntimeError(f"Failed to read axis status: {result}")
+        return bool(stat.MvCmdSts & MvcmdStatus.MVCMD_RUNNING)
+
+    def wait_for_stop_device(
+        self,
+        device_id,
+        timeout_s: float = 300.0,
+        poll_ms: int = 50,
+        stop_on_timeout: bool = True,
+    ):
+        self._require_device(device_id, "Selected")
+        started = time.monotonic()
+        start_grace_s = 0.05
+        saw_running = False
+        poll_s = max(0.001, float(poll_ms) / 1000.0)
+        while True:
+            moving = self.is_moving(device_id)
+            saw_running = saw_running or moving
+            if not moving and (
+                saw_running or time.monotonic() - started >= start_grace_s
+            ):
+                return True
+            if timeout_s is not None and time.monotonic() - started > float(timeout_s):
+                if stop_on_timeout:
+                    try:
+                        self.stop(device_id)
+                    except Exception:
+                        logger.exception("Failed to stop timed out axis")
+                raise TimeoutError(f"Axis {device_id} did not stop within {timeout_s}s")
+            time.sleep(poll_s)
+
+    def wait_for_stop_x(self, timeout_s: float = 300.0):
         self._require_device(self.id_x, "X")
-        self.lib.command_wait_for_stop(self.id_x, 100)
+        self.wait_for_stop_device(self.id_x, timeout_s=timeout_s)
 
-    def wait_for_stop_y(self):
+    def wait_for_stop_y(self, timeout_s: float = 300.0):
         self._require_device(self.id_y, "Y")
-        self.lib.command_wait_for_stop(self.id_y, 100)
+        self.wait_for_stop_device(self.id_y, timeout_s=timeout_s)
 
-    def wait_for_stop_z(self):
+    def wait_for_stop_z(self, timeout_s: float = 300.0):
         self._require_device(self.id_z, "Z")
-        self.lib.command_wait_for_stop(self.id_z, 100)
+        self.wait_for_stop_device(self.id_z, timeout_s=timeout_s)
 
-    def wait_for_stop_rotation(self):
+    def wait_for_stop_rotation(self, timeout_s: float = 300.0):
         self._require_device(self.id_rotation, "Rotation")
-        self.lib.command_wait_for_stop(self.id_rotation, 100)
+        self.wait_for_stop_device(self.id_rotation, timeout_s=timeout_s)
 
     def move_left(self, device_id):
         """
@@ -295,9 +360,11 @@ class ScannerDevice:
         :param position: the position of the destination.
         """
         self._require_device(device_id, "Selected")
-        self.lib.command_move_calb(
+        result = self.lib.command_move_calb(
             device_id, c_float(position), byref(self._get_calibration(calibration))
         )
+        if result != Result.Ok:
+            raise RuntimeError(f"Failed to move axis {device_id}: {result}")
         self.wait_for_stop()
 
     def move_x(self, position):
@@ -306,8 +373,7 @@ class ScannerDevice:
         :param position: the position of the destination.
         """
         self._require_device(self.id_x, "X")
-        self.lib.command_move_calb(self.id_x, c_float(position), byref(self.user_unit))
-        self.wait_for_stop_x()
+        self._command_move_calb_checked("X", position, self.user_unit)
 
     def move_y(self, position):
         """
@@ -315,8 +381,7 @@ class ScannerDevice:
         :param position: the position of the destination.
         """
         self._require_device(self.id_y, "Y")
-        self.lib.command_move_calb(self.id_y, c_float(position), byref(self.user_unit))
-        self.wait_for_stop_y()
+        self._command_move_calb_checked("Y", position, self.user_unit)
 
     def move_z(self, position):
         """
@@ -324,8 +389,7 @@ class ScannerDevice:
         :param position: the position of the destination
         """
         self._require_device(self.id_z, "Z")
-        self.lib.command_move_calb(self.id_z, c_float(position), byref(self.user_unit))
-        self.wait_for_stop_z()
+        self._command_move_calb_checked("Z", position, self.user_unit)
 
     def move_z_async(self, position):
         """
@@ -333,18 +397,17 @@ class ScannerDevice:
         :param position: destination position in user units.
         """
         self._require_device(self.id_z, "Z")
-        self.lib.command_move_calb(self.id_z, c_float(position), byref(self.user_unit))
+        self._command_move_calb_checked("Z", position, self.user_unit, async_move=True)
 
-    def move_rotation(self, position):
+    def move_rotation(self, position, timeout_s: float = 300.0):
         """
         Move rotation axis to the specified angle in degrees.
         :param position: destination angle in degrees.
         """
         self._require_device(self.id_rotation, "Rotation")
-        self.lib.command_move_calb(
-            self.id_rotation, c_float(position), byref(self.rotation_unit)
+        self._command_move_calb_checked(
+            "Rotation", position, self.rotation_unit, timeout_s=timeout_s
         )
-        self.wait_for_stop_rotation()
 
     def move_rotation_async(self, position):
         """
@@ -352,8 +415,8 @@ class ScannerDevice:
         :param position: destination angle in degrees.
         """
         self._require_device(self.id_rotation, "Rotation")
-        self.lib.command_move_calb(
-            self.id_rotation, c_float(position), byref(self.rotation_unit)
+        self._command_move_calb_checked(
+            "Rotation", position, self.rotation_unit, async_move=True
         )
 
     def shift_axis(self, device_id, distance, calibration=None):

@@ -42,6 +42,7 @@ class MeasureThread(QThread):
         x_range,
         y_range,
         z_range,
+        rotation_range,
         vna_power,
         vna_start,
         vna_stop,
@@ -63,6 +64,7 @@ class MeasureThread(QThread):
         use_z_snake_pattern=True,
         use_z_fly_mode=False,
         z_fly_speed=2.0,
+        use_rotation_sweep=False,
         plot_update_hz=10.0,
         x_movement_delay=100,
         y_movement_delay=150,
@@ -74,6 +76,7 @@ class MeasureThread(QThread):
         self.x_range = x_range
         self.y_range = y_range
         self.z_range = z_range
+        self.rotation_range = rotation_range
         self.vna_power = vna_power
         self.vna_start = vna_start
         self.vna_stop = vna_stop
@@ -95,6 +98,7 @@ class MeasureThread(QThread):
         self.use_z_snake_pattern = use_z_snake_pattern
         self.use_z_fly_mode = use_z_fly_mode
         self.z_fly_speed = z_fly_speed
+        self.use_rotation_sweep = use_rotation_sweep
         self.plot_update_hz = max(0.01, float(plot_update_hz))
         self._last_preview_emit_time = 0.0
         self.x_movement_delay = x_movement_delay
@@ -147,6 +151,20 @@ class MeasureThread(QThread):
         State.vna.set_average_status(bool(self.vna_average_enabled))
         State.vna.set_bandwidth(max(1, int(self.vna_bandwidth)))
 
+    @staticmethod
+    def _smooth_move_profile(profile, ramp_time_s: float, min_accel: float = 1.0):
+        speed = abs(float(profile.get("speed", 0.0)))
+        if speed <= 0:
+            return profile
+
+        max_accel = max(float(min_accel), speed / max(float(ramp_time_s), 0.001))
+        accel = float(profile.get("accel", max_accel))
+        decel = float(profile.get("decel", max_accel))
+        profile = dict(profile)
+        profile["accel"] = min(accel, max_accel) if accel > 0 else max_accel
+        profile["decel"] = min(decel, max_accel) if decel > 0 else max_accel
+        return profile
+
     def _build_z_profiles(self):
         if not (self.use_z_fly_mode and self.use_z_sweep):
             self._z_fast_profile = None
@@ -155,7 +173,7 @@ class MeasureThread(QThread):
 
         fly_speed = float(self.z_fly_speed)
         fallback_fast_speed = max(20.0, fly_speed * 8.0)
-        fallback_fast_accel = max(200.0, fallback_fast_speed * 8.0)
+        fallback_fast_accel = max(1.0, fallback_fast_speed / 1.5)
 
         try:
             self._z_fast_profile = State.scanner.get_move_settings(State.scanner.id_z)
@@ -195,8 +213,14 @@ class MeasureThread(QThread):
                     "accel": fallback_fast_accel,
                     "decel": fallback_fast_accel,
                 }
+            else:
+                self._z_fast_profile = self._smooth_move_profile(
+                    self._z_fast_profile,
+                    ramp_time_s=1.5,
+                    min_accel=1.0,
+                )
 
-        fly_accel = max(1.0, fly_speed * 5.0)
+        fly_accel = max(1.0, fly_speed / 0.8)
         self._z_fly_profile = {
             "speed": fly_speed,
             "accel": fly_accel,
@@ -230,6 +254,10 @@ class MeasureThread(QThread):
 
         remaining = max(0, round((self._total_steps - self._step_counter) / velocity))
         self.remaining_time.emit(f"Approx time ~ {convert_seconds(remaining)}")
+
+    def _rotation_move_timeout_s(self, current_angle, target_angle):
+        travel = abs(float(target_angle) - float(current_angle))
+        return max(5.0, travel / 10.0 * 4.0 + 5.0)
 
     def _capture_point(
         self,
@@ -410,9 +438,11 @@ class MeasureThread(QThread):
 
         if self.use_z_sweep:
             try:
-                State.scanner.wait_for_stop_z()
-            except Exception:
-                pass
+                State.scanner.wait_for_stop_z(timeout_s=3.0)
+            except Exception as err:
+                self.log.emit(
+                    {"type": "warning", "msg": f"Z fly stop wait failed: {err}"}
+                )
             # Restore fast/default profile for non-acquisition moves.
             self._apply_z_profile(self._z_fast_profile)
 
@@ -450,7 +480,11 @@ class MeasureThread(QThread):
             self.generator_amps_2 = _normalize_amps(self.generator_amps_2)
 
             self._total_steps = (
-                len(self.y_range) * len(self.x_range) * len(self.z_range) * freq_points
+                len(self.rotation_range)
+                * len(self.y_range)
+                * len(self.x_range)
+                * len(self.z_range)
+                * freq_points
             )
             self._step_counter = 0
             self._start_time = time.time()
@@ -484,125 +518,147 @@ class MeasureThread(QThread):
                 if amp_2 is not None:
                     State.generator_2.set_power(amp_2)
 
-                time.sleep(0.5)  # Allow generators to stabilize before measurement.
+                time.sleep(0.3)  # Allow generators to stabilize before measurement.
 
-                full_data = {
-                    "freq_1": freq_1,
-                    "amp_1": amp_1,
-                    "freq_2": freq_2,
-                    "amp_2": amp_2,
-                    "x": self.x_range.tolist(),
-                    "y": self.y_range.tolist(),
-                    "z": self.z_range.tolist(),
-                    "amplitude": np.zeros(
-                        (len(self.y_range), len(self.x_range), len(self.z_range))
-                    ).tolist(),
-                    "phase": np.zeros(
-                        (len(self.y_range), len(self.x_range), len(self.z_range))
-                    ).tolist(),
-                    "complex_real": np.zeros(
-                        (len(self.y_range), len(self.x_range), len(self.z_range))
-                    ).tolist(),
-                    "complex_imag": np.zeros(
-                        (len(self.y_range), len(self.x_range), len(self.z_range))
-                    ).tolist(),
-                    "z_request": np.zeros(
-                        (len(self.y_range), len(self.x_range), len(self.z_range))
-                    ).tolist(),
-                    "z_response": np.zeros(
-                        (len(self.y_range), len(self.x_range), len(self.z_range))
-                    ).tolist(),
-                    "vna_latency_ms": np.zeros(
-                        (len(self.y_range), len(self.x_range), len(self.z_range))
-                    ).tolist(),
-                }
-                preview_data = {
-                    "freq_1": freq_1,
-                    "amp_1": amp_1,
-                    "freq_2": freq_2,
-                    "amp_2": amp_2,
-                    "x": full_data["x"],
-                    "y": full_data["y"],
-                    "z": full_data["z"],
-                    "amplitude": full_data["amplitude"],
-                    "phase": full_data["phase"],
-                    "complex_real": full_data["complex_real"],
-                    "complex_imag": full_data["complex_imag"],
-                    "z_request": full_data["z_request"],
-                    "z_response": full_data["z_response"],
-                    "vna_latency_ms": full_data["vna_latency_ms"],
-                }
-                freq_has_data = False
-
-                for step_y, y in enumerate(self.y_range):
-                    if self.use_y_sweep:
-                        State.scanner.move_y(y)
-                        self.msleep(self.y_movement_delay)
+                for rotation_angle in self.rotation_range:
                     if not State.measure_running:
                         stop_requested = True
                         break
-                    for step_x, x in enumerate(self.x_range):
-                        if self.use_x_sweep:
-                            State.scanner.move_x(x)
-                            self.msleep(self.x_movement_delay)
+                    if self.use_rotation_sweep:
+                        current_angle = State.scanner.get_position(
+                            State.scanner.id_rotation,
+                            State.scanner.rotation_unit,
+                        )
+                        State.scanner.move_rotation(
+                            float(rotation_angle),
+                            timeout_s=self._rotation_move_timeout_s(
+                                current_angle,
+                                rotation_angle,
+                            ),
+                        )
+                        self.msleep(self.no_movement_delay)
+
+                    full_data = {
+                        "freq_1": freq_1,
+                        "amp_1": amp_1,
+                        "freq_2": freq_2,
+                        "amp_2": amp_2,
+                        "rotation_angle": float(rotation_angle),
+                        "x": self.x_range.tolist(),
+                        "y": self.y_range.tolist(),
+                        "z": self.z_range.tolist(),
+                        "amplitude": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "phase": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "complex_real": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "complex_imag": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "z_request": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "z_response": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "vna_latency_ms": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                    }
+                    preview_data = {
+                        "freq_1": freq_1,
+                        "amp_1": amp_1,
+                        "freq_2": freq_2,
+                        "amp_2": amp_2,
+                        "rotation_angle": full_data["rotation_angle"],
+                        "x": full_data["x"],
+                        "y": full_data["y"],
+                        "z": full_data["z"],
+                        "amplitude": full_data["amplitude"],
+                        "phase": full_data["phase"],
+                        "complex_real": full_data["complex_real"],
+                        "complex_imag": full_data["complex_imag"],
+                        "z_request": full_data["z_request"],
+                        "z_response": full_data["z_response"],
+                        "vna_latency_ms": full_data["vna_latency_ms"],
+                    }
+                    angle_has_data = False
+
+                    for step_y, y in enumerate(self.y_range):
+                        if self.use_y_sweep:
+                            State.scanner.move_y(y)
+                            self.msleep(self.y_movement_delay)
                         if not State.measure_running:
                             stop_requested = True
                             break
-
-                        if self.use_z_fly_mode and self.use_z_sweep:
-                            captured = self._scan_z_fly(
-                                full_data,
-                                preview_data,
-                                step_y,
-                                step_x,
-                                freq_1,
-                                freq_2,
-                            )
-                            if captured > 0:
-                                freq_has_data = True
+                        for step_x, x in enumerate(self.x_range):
+                            if self.use_x_sweep:
+                                State.scanner.move_x(x)
+                                self.msleep(self.x_movement_delay)
                             if not State.measure_running:
                                 stop_requested = True
                                 break
-                        else:
-                            if use_z_snake:
-                                # Alternate Z direction for each X row in step mode.
-                                if step_x % 2 == 0:
-                                    z_indices = range(len(self.z_range))
-                                else:
-                                    z_indices = reversed(range(len(self.z_range)))
-                            else:
-                                z_indices = range(len(self.z_range))
 
-                            for z_idx in z_indices:
-                                z = self.z_range[z_idx]
-                                if self.use_z_sweep:
-                                    State.scanner.move_z(z)
-                                    self.msleep(self.z_movement_delay)
-                                else:
-                                    self.msleep(self.no_movement_delay)
-
-                                if self._capture_point(
+                            if self.use_z_fly_mode and self.use_z_sweep:
+                                captured = self._scan_z_fly(
                                     full_data,
                                     preview_data,
                                     step_y,
                                     step_x,
-                                    z_idx,
-                                    z,
                                     freq_1,
                                     freq_2,
-                                ):
-                                    freq_has_data = True
+                                )
+                                if captured > 0:
+                                    angle_has_data = True
                                 if not State.measure_running:
                                     stop_requested = True
                                     break
-                            if stop_requested:
-                                break
+                            else:
+                                if use_z_snake:
+                                    # Alternate Z direction for each X row in step mode.
+                                    if step_x % 2 == 0:
+                                        z_indices = range(len(self.z_range))
+                                    else:
+                                        z_indices = reversed(range(len(self.z_range)))
+                                else:
+                                    z_indices = range(len(self.z_range))
+
+                                for z_idx in z_indices:
+                                    z = self.z_range[z_idx]
+                                    if self.use_z_sweep:
+                                        State.scanner.move_z(z)
+                                        self.msleep(self.z_movement_delay)
+                                    else:
+                                        self.msleep(self.no_movement_delay)
+
+                                    if self._capture_point(
+                                        full_data,
+                                        preview_data,
+                                        step_y,
+                                        step_x,
+                                        z_idx,
+                                        z,
+                                        freq_1,
+                                        freq_2,
+                                    ):
+                                        angle_has_data = True
+                                    if not State.measure_running:
+                                        stop_requested = True
+                                        break
+                                if stop_requested:
+                                    break
+                        if stop_requested:
+                            break
+
+                    if angle_has_data:
+                        self._emit_preview_data(preview_data, force=True)
+                        self.measure.data.append(full_data)
                     if stop_requested:
                         break
-
-                if freq_has_data:
-                    self._emit_preview_data(preview_data, force=True)
-                    self.measure.data.append(full_data)
                 if stop_requested:
                     break
 
@@ -693,6 +749,30 @@ class MeasureWidget(QGroupBox):
         self.z_step.setSingleStep(0.0125)
         self.z_step.setValue(State.z_step)
         self.z_step.valueChanged.connect(self.update_z_points)
+
+        self.rotation_check = QCheckBox("Rotation", self)
+        self.rotation_check.setChecked(State.use_rotation_sweep)
+        self.rotation_check.toggled.connect(self.update_approx_time)
+        self.rotation_start = DoubleSpinBox(self)
+        self.rotation_start.setRange(-36000, 36000)
+        self.rotation_start.setDecimals(3)
+        self.rotation_start.setValue(State.rotation_start)
+        self.rotation_start.valueChanged.connect(self.update_rotation_step)
+        self.rotation_stop = DoubleSpinBox(self)
+        self.rotation_stop.setRange(-36000, 36000)
+        self.rotation_stop.setDecimals(3)
+        self.rotation_stop.setValue(State.rotation_stop)
+        self.rotation_stop.valueChanged.connect(self.update_rotation_step)
+        self.rotation_points = QSpinBox(self)
+        self.rotation_points.setRange(1, 10000)
+        self.rotation_points.setValue(State.rotation_points)
+        self.rotation_points.valueChanged.connect(self.update_rotation_step)
+        self.rotation_points.valueChanged.connect(self.update_approx_time)
+        self.rotation_step = QDoubleSpinBox(self)
+        self.rotation_step.setRange(0.001, 36000)
+        self.rotation_step.setDecimals(3)
+        self.rotation_step.setValue(State.rotation_step)
+        self.rotation_step.valueChanged.connect(self.update_rotation_points)
 
         self.z_snake_check = QCheckBox("Z Snake", self)
         self.z_snake_check.setChecked(State.use_z_snake_pattern)
@@ -824,13 +904,28 @@ class MeasureWidget(QGroupBox):
         g_layout.addWidget(self.z_points, 3, 3, alignment=Qt.AlignmentFlag.AlignLeft)
         g_layout.addWidget(self.z_step, 3, 4, alignment=Qt.AlignmentFlag.AlignLeft)
         g_layout.addWidget(
-            self.z_snake_check, 4, 0, alignment=Qt.AlignmentFlag.AlignLeft
+            self.rotation_check, 4, 0, alignment=Qt.AlignmentFlag.AlignLeft
         )
-        g_layout.addWidget(self.z_fly_check, 4, 1, alignment=Qt.AlignmentFlag.AlignLeft)
         g_layout.addWidget(
-            QLabel("Z fly speed", self), 4, 2, alignment=Qt.AlignmentFlag.AlignLeft
+            self.rotation_start, 4, 1, alignment=Qt.AlignmentFlag.AlignLeft
         )
-        g_layout.addWidget(self.z_fly_speed, 4, 3, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(
+            self.rotation_stop, 4, 2, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+        g_layout.addWidget(
+            self.rotation_points, 4, 3, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+        g_layout.addWidget(
+            self.rotation_step, 4, 4, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+        g_layout.addWidget(
+            self.z_snake_check, 5, 0, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+        g_layout.addWidget(self.z_fly_check, 5, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(
+            QLabel("Z fly speed", self), 5, 2, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+        g_layout.addWidget(self.z_fly_speed, 5, 3, alignment=Qt.AlignmentFlag.AlignLeft)
 
         f_layout.addRow("VNA points", self.vna_points)
         f_layout.addRow("VNA start time, s", self.vna_start_time)
@@ -877,6 +972,7 @@ class MeasureWidget(QGroupBox):
         self.update_x_step()
         self.update_y_step()
         self.update_z_step()
+        self.update_rotation_step()
         self.on_z_fly_toggled(self.z_fly_check.isChecked())
         self.update_approx_time()
 
@@ -904,6 +1000,11 @@ class MeasureWidget(QGroupBox):
             return
         if self.z_check.isChecked() and not State.scanner.id_z:
             logger.warning("Z sweep is enabled, but Z axis is not initialized!")
+            return
+        if self.rotation_check.isChecked() and not State.scanner.id_rotation:
+            logger.warning(
+                "Rotation sweep is enabled, but rotation axis is not initialized!"
+            )
             return
         if self.generator_freq_points_2.value() != self.generator_freq_points_1.value():
             logger.warning("Frequency points must be equal!")
@@ -933,6 +1034,7 @@ class MeasureWidget(QGroupBox):
         State.use_z_snake_pattern = self.z_snake_check.isChecked()
         State.use_z_fly_mode = self.z_fly_check.isChecked()
         State.z_fly_speed = self.z_fly_speed.value()
+        State.use_rotation_sweep = self.rotation_check.isChecked()
         State.measure_vna_points = self.vna_points.value()
         State.measure_vna_start_time = self.vna_start_time.value()
         State.measure_vna_stop_time = self.vna_stop_time.value()
@@ -953,6 +1055,10 @@ class MeasureWidget(QGroupBox):
         State.z_stop = self.z_stop.value()
         State.z_points = self.z_points.value()
         State.z_step = self.z_step.value()
+        State.rotation_start = self.rotation_start.value()
+        State.rotation_stop = self.rotation_stop.value()
+        State.rotation_points = self.rotation_points.value()
+        State.rotation_step = self.rotation_step.value()
 
         amps_1 = []
         raw_amps_1 = self.generator_amps_1.text().replace(" ", "").split(",")
@@ -987,6 +1093,13 @@ class MeasureWidget(QGroupBox):
             )
             if self.z_check.isChecked()
             else np.array([0]),
+            rotation_range=np.linspace(
+                self.rotation_start.value(),
+                self.rotation_stop.value(),
+                self.rotation_points.value(),
+            )
+            if self.rotation_check.isChecked()
+            else np.array([0]),
             vna_power=-30,
             vna_start=State.measure_vna_start_time,
             vna_stop=State.measure_vna_stop_time,
@@ -1008,6 +1121,7 @@ class MeasureWidget(QGroupBox):
             use_z_snake_pattern=self.z_snake_check.isChecked(),
             use_z_fly_mode=self.z_fly_check.isChecked(),
             z_fly_speed=self.z_fly_speed.value(),
+            use_rotation_sweep=self.rotation_check.isChecked(),
             plot_update_hz=State.plot_update_hz,
             x_movement_delay=State.x_movement_delay,
             y_movement_delay=State.y_movement_delay,
@@ -1016,7 +1130,7 @@ class MeasureWidget(QGroupBox):
             fly_poll_delay_ms=max(1, int(min(50, State.no_movement_delay // 5 or 1))),
         )
 
-        self.measure_thread.data.connect(
+        update_plot = (
             self.parent()
             .parent()
             .parent()
@@ -1026,7 +1140,9 @@ class MeasureWidget(QGroupBox):
             .parent()
             .parent()
             .update_plot
-        )  # FIXME: fix parents later
+        )
+        self.measure_thread.data.connect(update_plot)  # FIXME: fix parents later
+        self.measure_thread.final_data.connect(update_plot)
         self.measure_thread.progress.connect(lambda x: self.progress_bar.setValue(x))
         self.measure_thread.remaining_time.connect(
             lambda x: self.approx_time.setText(x)
@@ -1056,6 +1172,11 @@ class MeasureWidget(QGroupBox):
 
         if reply == QMessageBox.Yes:
             State.measure_running = False
+            if State.scanner:
+                try:
+                    State.scanner.emergency_stop()
+                except Exception as err:
+                    logger.warning(f"Failed to stop scanner axes: {err}")
 
     def update_x_step(self):
         step = (
@@ -1105,9 +1226,31 @@ class MeasureWidget(QGroupBox):
         self.z_points.setValue(points)
         self.z_points.valueChanged.connect(self.update_z_step)
 
+    def update_rotation_step(self):
+        step = (
+            np.abs(self.rotation_stop.value() - self.rotation_start.value())
+            / self.rotation_points.value()
+        )
+        self.rotation_step.valueChanged.disconnect(self.update_rotation_points)
+        self.rotation_step.setValue(step)
+        self.rotation_step.valueChanged.connect(self.update_rotation_points)
+
+    def update_rotation_points(self):
+        points = (
+            np.abs(self.rotation_stop.value() - self.rotation_start.value())
+            / self.rotation_step.value()
+        )
+        self.rotation_points.valueChanged.disconnect(self.update_rotation_step)
+        self.rotation_points.setValue(max(1, int(round(points))))
+        self.rotation_points.valueChanged.connect(self.update_rotation_step)
+
     def update_approx_time(self):
+        rotation_points = (
+            self.rotation_points.value() if self.rotation_check.isChecked() else 1
+        )
         steps = (
-            self.x_points.value()
+            rotation_points
+            * self.x_points.value()
             * self.y_points.value()
             * self.z_points.value()
             * np.min(

@@ -8,7 +8,7 @@ from utils.exceptions import DeviceConnectionError
 
 
 class State:
-    settings = QSettings("settings.ini", QSettings.IniFormat)
+    settings = QSettings("settings.ini", QSettings.Format.IniFormat)
 
     measure_running = False
     monitor_running = False
@@ -62,6 +62,13 @@ class State:
     )
     use_z_fly_mode: bool = settings.value("Measure/use_z_fly_mode", "false") == "true"
     z_fly_speed: float = float(settings.value("Measure/z_fly_speed", 2.0))
+    use_rotation_sweep: bool = (
+        settings.value("Measure/use_rotation_sweep", "false") == "true"
+    )
+    rotation_start: float = float(settings.value("Measure/rotation_start", 0.0))
+    rotation_stop: float = float(settings.value("Measure/rotation_stop", 0.0))
+    rotation_points: int = int(settings.value("Measure/rotation_points", 1))
+    rotation_step: float = float(settings.value("Measure/rotation_step", 0.0))
 
     measure_vna_points: int = int(settings.value("Measure/vna_points", 100))
     measure_vna_start_time: float = float(settings.value("Measure/vna_start_time", 0.0))
@@ -110,6 +117,11 @@ class State:
         cls.settings.setValue("Measure/use_z_snake_pattern", cls.use_z_snake_pattern)
         cls.settings.setValue("Measure/use_z_fly_mode", cls.use_z_fly_mode)
         cls.settings.setValue("Measure/z_fly_speed", cls.z_fly_speed)
+        cls.settings.setValue("Measure/use_rotation_sweep", cls.use_rotation_sweep)
+        cls.settings.setValue("Measure/rotation_start", cls.rotation_start)
+        cls.settings.setValue("Measure/rotation_stop", cls.rotation_stop)
+        cls.settings.setValue("Measure/rotation_points", cls.rotation_points)
+        cls.settings.setValue("Measure/rotation_step", cls.rotation_step)
         cls.settings.setValue("Measure/vna_points", cls.measure_vna_points)
         cls.settings.setValue("Measure/vna_start_time", cls.measure_vna_start_time)
         cls.settings.setValue("Measure/vna_stop_time", cls.measure_vna_stop_time)

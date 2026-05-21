@@ -65,9 +65,23 @@ class RotationMeasureThread(QThread):
         State.vna.set_average_status(False)
         State.vna.set_bandwidth(max(1, self.vna_bandwidth))
 
+    @staticmethod
+    def _smooth_move_profile(profile, ramp_time_s: float, min_accel: float = 1.0):
+        speed = abs(float(profile.get("speed", 0.0)))
+        if speed <= 0:
+            return profile
+
+        max_accel = max(float(min_accel), speed / max(float(ramp_time_s), 0.001))
+        accel = float(profile.get("accel", max_accel))
+        decel = float(profile.get("decel", max_accel))
+        profile = dict(profile)
+        profile["accel"] = min(accel, max_accel) if accel > 0 else max_accel
+        profile["decel"] = min(decel, max_accel) if decel > 0 else max_accel
+        return profile
+
     def _build_rotation_profiles(self):
         fallback_fast_speed = max(20.0, self.fly_speed * 8.0)
-        fallback_fast_accel = max(200.0, fallback_fast_speed * 8.0)
+        fallback_fast_accel = max(1.0, fallback_fast_speed / 1.5)
         try:
             self._rotation_fast_profile = State.scanner.get_move_settings(
                 State.scanner.id_rotation,
@@ -91,8 +105,14 @@ class RotationMeasureThread(QThread):
                     ),
                 }
             )
+        else:
+            self._rotation_fast_profile = self._smooth_move_profile(
+                self._rotation_fast_profile,
+                ramp_time_s=1.5,
+                min_accel=1.0,
+            )
 
-        fly_accel = max(1.0, self.fly_speed * 5.0)
+        fly_accel = max(1.0, self.fly_speed / 0.8)
         self._rotation_fly_profile = {
             "speed": self.fly_speed,
             "accel": fly_accel,
@@ -153,13 +173,25 @@ class RotationMeasureThread(QThread):
         self.point.emit(point)
         return True
 
+    def _rotation_move_timeout_s(self, start_angle, target_angle, speed=None):
+        travel = abs(float(target_angle) - float(start_angle))
+        speed = abs(float(speed if speed is not None else self.fly_speed))
+        return max(5.0, travel / max(speed, 1e-6) * 4.0 + 5.0)
+
     def _run_step_mode(self, result):
         total = max(1, self.angles.size)
         for index, angle in enumerate(self.angles, start=1):
             if not self._running:
                 break
 
-            State.scanner.move_rotation(float(angle))
+            current_angle = State.scanner.get_position(
+                State.scanner.id_rotation,
+                State.scanner.rotation_unit,
+            )
+            State.scanner.move_rotation(
+                float(angle),
+                timeout_s=self._rotation_move_timeout_s(current_angle, angle),
+            )
             self.msleep(max(0, self.delay_ms))
 
             if self._capture_at_angle(float(angle), result):
@@ -169,7 +201,14 @@ class RotationMeasureThread(QThread):
         if self.angles.size == 0:
             return
         if self.angles.size == 1:
-            State.scanner.move_rotation(float(self.angles[0]))
+            current_angle = State.scanner.get_position(
+                State.scanner.id_rotation,
+                State.scanner.rotation_unit,
+            )
+            State.scanner.move_rotation(
+                float(self.angles[0]),
+                timeout_s=self._rotation_move_timeout_s(current_angle, self.angles[0]),
+            )
             self._capture_at_angle(float(self.angles[0]), result)
             self.progress.emit(100)
             return
@@ -183,7 +222,18 @@ class RotationMeasureThread(QThread):
         tolerance = max(0.05, 0.45 * min_step) if min_step > 0 else 0.05
 
         self._apply_rotation_profile(self._rotation_fast_profile)
-        State.scanner.move_rotation(float(targets[0]))
+        current_angle = State.scanner.get_position(
+            State.scanner.id_rotation,
+            State.scanner.rotation_unit,
+        )
+        State.scanner.move_rotation(
+            float(targets[0]),
+            timeout_s=self._rotation_move_timeout_s(
+                current_angle,
+                targets[0],
+                self._rotation_fast_profile.get("speed", self.fly_speed),
+            ),
+        )
         self.msleep(max(0, self.delay_ms))
 
         captured = 0
@@ -248,9 +298,11 @@ class RotationMeasureThread(QThread):
                 pass
 
         try:
-            State.scanner.wait_for_stop_rotation()
-        except Exception:
-            pass
+            State.scanner.wait_for_stop_rotation(timeout_s=5.0)
+        except Exception as err:
+            self.log.emit(
+                {"type": "warning", "msg": f"Rotation stop wait failed: {err}"}
+            )
         self._apply_rotation_profile(self._rotation_fast_profile)
 
         if missed > 0:

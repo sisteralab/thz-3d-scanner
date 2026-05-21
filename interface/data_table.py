@@ -130,9 +130,38 @@ class TableView(QtWidgets.QTableView):
             # Single data dictionary - open one window
             self.open_visualization_window(data, measure.comment)
         elif isinstance(data, list):
-            # List of data dictionaries - open multiple windows
-            for single_data in data:
-                self.open_visualization_window(single_data, measure.comment)
+            rotation_groups = self._group_rotation_data(data)
+            if rotation_groups:
+                for grouped_data in rotation_groups:
+                    self.open_visualization_window(grouped_data, measure.comment)
+            else:
+                # List of data dictionaries - open multiple windows
+                for single_data in data:
+                    self.open_visualization_window(single_data, measure.comment)
+
+    @staticmethod
+    def _group_rotation_data(data):
+        blocks = [
+            item for item in data if isinstance(item, dict) and "rotation_angle" in item
+        ]
+        if not blocks:
+            return []
+
+        groups = {}
+        for item in blocks:
+            key = (
+                item.get("freq_1"),
+                item.get("freq_2"),
+                item.get("amp_1"),
+                item.get("amp_2"),
+            )
+            groups.setdefault(key, []).append(item)
+
+        grouped_data = []
+        for items in groups.values():
+            items.sort(key=lambda block: float(block.get("rotation_angle", 0.0)))
+            grouped_data.append(items)
+        return grouped_data
 
     def open_visualization_window(self, data, comment: str = ""):
         """Open a visualization window for the given data"""

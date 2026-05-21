@@ -19,6 +19,7 @@ from interface.plot_widgets import (
     ComplexReferenceController,
     ComplexReferenceWidget,
     PhasePlotWidget,
+    RotationSliceSelectorWidget,
     YSliceSelectorWidget,
     extract_xz_slice,
 )
@@ -41,6 +42,7 @@ class MainWindow(QMainWindow):
         self.reference_controller = ComplexReferenceController(self)
         self._source_data = None
         self._current_y_index = 0
+        self._current_rotation_index = 0
 
         # Create amplitude pyqtgraph widget
         self.amplitude_widget = AmplitudePlotWidget(
@@ -52,9 +54,13 @@ class MainWindow(QMainWindow):
             reference_controller=self.reference_controller
         )
         self.reference_widget = ComplexReferenceWidget(self.reference_controller)
+        self.rotation_slice_widget = RotationSliceSelectorWidget()
         self.y_slice_widget = YSliceSelectorWidget()
         self.reference_controller.corrected_data_ready.connect(
             self._apply_corrected_data
+        )
+        self.rotation_slice_widget.rotation_index_changed.connect(
+            self._on_rotation_slice_changed
         )
         self.y_slice_widget.y_index_changed.connect(self._on_y_slice_changed)
 
@@ -66,6 +72,7 @@ class MainWindow(QMainWindow):
         plots_layout.addWidget(self.amplitude_widget, stretch=1)
         plots_layout.addWidget(self.phase_widget, stretch=1)
 
+        left_layout.addWidget(self.rotation_slice_widget)
         left_layout.addWidget(self.y_slice_widget)
         left_layout.addWidget(self.reference_widget)
         left_layout.addLayout(plots_layout)
@@ -113,7 +120,17 @@ class MainWindow(QMainWindow):
         if isinstance(data, dict) and "vna_data" in data:
             data = {k: v for k, v in data.items() if k != "vna_data"}
         self._source_data = data
-        y_axis = self._extract_y_axis(data)
+        rotation_axis = self._extract_rotation_axis(data)
+        self.rotation_slice_widget.set_rotation_values(rotation_axis)
+        self._current_rotation_index = int(
+            np.clip(self._current_rotation_index, 0, rotation_axis.size - 1)
+        )
+        self.rotation_slice_widget.set_index(
+            self._current_rotation_index,
+            emit_signal=False,
+        )
+        current_data = self._current_rotation_data()
+        y_axis = self._extract_y_axis(current_data)
         self.y_slice_widget.set_y_values(y_axis)
         self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
         self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)
@@ -121,6 +138,8 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _extract_y_axis(data):
+        if not isinstance(data, dict):
+            return np.array([0.0], dtype=float)
         amplitude = np.asarray(data.get("amplitude", []))
         if amplitude.ndim != 3:
             return np.array([0.0], dtype=float)
@@ -130,6 +149,42 @@ class MainWindow(QMainWindow):
             y_axis = np.arange(y_len, dtype=float)
         return y_axis
 
+    @staticmethod
+    def _extract_rotation_axis(data):
+        if isinstance(data, list):
+            values = []
+            for item in data:
+                if isinstance(item, dict):
+                    values.append(float(item.get("rotation_angle", 0.0)))
+            if values:
+                return np.asarray(values, dtype=float)
+        if isinstance(data, dict) and "rotation_angle" in data:
+            return np.asarray([float(data.get("rotation_angle", 0.0))], dtype=float)
+        return np.array([0.0], dtype=float)
+
+    def _current_rotation_data(self):
+        if isinstance(self._source_data, list):
+            if not self._source_data:
+                return {}
+            idx = int(
+                np.clip(
+                    self._current_rotation_index,
+                    0,
+                    len(self._source_data) - 1,
+                )
+            )
+            return self._source_data[idx]
+        return self._source_data
+
+    def _on_rotation_slice_changed(self, rotation_index):
+        self._current_rotation_index = int(rotation_index)
+        current_data = self._current_rotation_data()
+        y_axis = self._extract_y_axis(current_data)
+        self.y_slice_widget.set_y_values(y_axis)
+        self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
+        self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)
+        self._push_current_slice()
+
     def _on_y_slice_changed(self, y_index):
         self._current_y_index = int(y_index)
         self._push_current_slice()
@@ -138,7 +193,7 @@ class MainWindow(QMainWindow):
         if self._source_data is None:
             return
         self.reference_controller.set_raw_data(
-            extract_xz_slice(self._source_data, self._current_y_index)
+            extract_xz_slice(self._current_rotation_data(), self._current_y_index)
         )
 
     def _apply_corrected_data(self, data):
