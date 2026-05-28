@@ -62,6 +62,9 @@ class State:
     )
     use_z_fly_mode: bool = settings.value("Measure/use_z_fly_mode", "false") == "true"
     z_fly_speed: float = float(settings.value("Measure/z_fly_speed", 2.0))
+    auto_adjust_z_fly_speed: bool = (
+        settings.value("Measure/auto_adjust_z_fly_speed", "true") == "true"
+    )
     use_rotation_sweep: bool = (
         settings.value("Measure/use_rotation_sweep", "false") == "true"
     )
@@ -144,6 +147,9 @@ class State:
         cls.settings.setValue("Measure/use_z_snake_pattern", cls.use_z_snake_pattern)
         cls.settings.setValue("Measure/use_z_fly_mode", cls.use_z_fly_mode)
         cls.settings.setValue("Measure/z_fly_speed", cls.z_fly_speed)
+        cls.settings.setValue(
+            "Measure/auto_adjust_z_fly_speed", cls.auto_adjust_z_fly_speed
+        )
         cls.settings.setValue("Measure/use_rotation_sweep", cls.use_rotation_sweep)
         cls.settings.setValue("Measure/rotation_start", cls.rotation_start)
         cls.settings.setValue("Measure/rotation_stop", cls.rotation_stop)

@@ -64,6 +64,7 @@ class MeasureThread(QThread):
         use_z_snake_pattern=True,
         use_z_fly_mode=False,
         z_fly_speed=2.0,
+        auto_adjust_z_fly_speed=True,
         use_rotation_sweep=False,
         plot_update_hz=10.0,
         x_movement_delay=100,
@@ -98,6 +99,7 @@ class MeasureThread(QThread):
         self.use_z_snake_pattern = use_z_snake_pattern
         self.use_z_fly_mode = use_z_fly_mode
         self.z_fly_speed = z_fly_speed
+        self.auto_adjust_z_fly_speed = auto_adjust_z_fly_speed
         self.use_rotation_sweep = use_rotation_sweep
         self.plot_update_hz = max(0.01, float(plot_update_hz))
         self._last_preview_emit_time = 0.0
@@ -198,7 +200,7 @@ class MeasureThread(QThread):
                     ),
                 }
             )
-        fly_accel = max(1.0, fly_speed / 0.8)
+        fly_accel = max(1.0, fly_speed * 5.0)
         self._z_fly_profile = {
             "speed": fly_speed,
             "accel": fly_accel,
@@ -222,7 +224,7 @@ class MeasureThread(QThread):
         if requested_speed <= safe_speed:
             return
 
-        accel = max(1.0, safe_speed / 0.8)
+        accel = max(1.0, safe_speed * 5.0)
         self._z_fly_profile = {
             "speed": safe_speed,
             "accel": accel,
@@ -401,6 +403,7 @@ class MeasureThread(QThread):
 
         captured = 0
         missed = 0
+        late = 0
         target_idx = 0
 
         if self.use_z_sweep:
@@ -408,28 +411,39 @@ class MeasureThread(QThread):
             self._apply_z_profile(self._z_fast_profile)
             State.scanner.move_z(start_z)
             self.msleep(self.z_movement_delay)
-            self._probe_vna_latency()
-            self._limit_z_fly_speed_for_latency(min_step, tolerance)
-            lead_distance = self._z_fly_ramp_distance() + tolerance
-            lead_start_z = start_z - direction * lead_distance
-            lead_end_z = end_z + direction * lead_distance
-            if lead_distance > 0:
+            if self.auto_adjust_z_fly_speed:
+                self._probe_vna_latency()
+                self._limit_z_fly_speed_for_latency(min_step, tolerance)
+            else:
                 self.log.emit(
                     {
                         "type": "info",
                         "msg": (
-                            f"Z fly lead-in {lead_distance:.4f} units; "
-                            f"moving {lead_start_z:.4f} -> {lead_end_z:.4f}"
+                            "Z fly auto speed adjust disabled; "
+                            f"using requested speed={self.z_fly_speed:.4f}."
                         ),
                     }
                 )
-                State.scanner.move_z(lead_start_z)
-                self.msleep(self.z_movement_delay)
+            if self._capture_point(
+                full_data,
+                preview_data,
+                step_y,
+                step_x,
+                target_idx,
+                start_z,
+                freq_1,
+                freq_2,
+                sample_tolerance=min_step,
+            ):
+                captured += 1
+                if full_data["late_sample"][step_y][step_x][target_idx]:
+                    late += 1
+            target_idx += 1
             # During acquisition pass, use requested constant fly speed.
             self._apply_z_profile(self._z_fly_profile)
-            State.scanner.move_z_async(lead_end_z)
+            State.scanner.move_z_async(end_z)
 
-        travel = abs(end_z - start_z) + 2.0 * self._z_fly_ramp_distance()
+        travel = abs(end_z - start_z)
         fly_speed = abs(float(self._z_fly_profile.get("speed", self.z_fly_speed)))
         expected = travel / max(fly_speed, 1e-6)
         timeout_s = max(2.0, expected * 4.0 + 2.0)
@@ -460,6 +474,8 @@ class MeasureThread(QThread):
                     sample_tolerance=min_step,
                 ):
                     captured += 1
+                    if full_data["late_sample"][step_y][step_x][target_idx]:
+                        late += 1
                 target_idx += 1
                 continue
 
@@ -480,6 +496,8 @@ class MeasureThread(QThread):
                     sample_tolerance=min_step,
                 ):
                     captured += 1
+                    if full_data["late_sample"][step_y][step_x][target_idx]:
+                        late += 1
                 else:
                     missed += 1
                 target_idx += 1
@@ -509,13 +527,14 @@ class MeasureThread(QThread):
             # Restore fast/default profile for non-acquisition moves.
             self._apply_z_profile(self._z_fast_profile)
 
-        if missed > 0:
+        if late > 0 or missed > 0:
             self.log.emit(
                 {
-                    "type": "warning",
+                    "type": "warning" if missed > 0 else "info",
                     "msg": (
-                        f"Fly Z skipped {missed} targets at y={step_y}, x={step_x}. "
-                        "Reduce fly speed or increase VNA throughput."
+                        f"Fly Z quality at y={step_y}, x={step_x}: "
+                        f"late={late}, missed={missed}, captured={captured}, "
+                        f"total={z_targets.size}."
                     ),
                 }
             )
@@ -883,6 +902,11 @@ class MeasureWidget(QGroupBox):
             "Move Z continuously with fixed speed and sample VNA while moving"
         )
         self.z_fly_check.toggled.connect(self.on_z_fly_toggled)
+        self.auto_adjust_z_fly_speed_check = QCheckBox("Auto Z fly speed", self)
+        self.auto_adjust_z_fly_speed_check.setChecked(State.auto_adjust_z_fly_speed)
+        self.auto_adjust_z_fly_speed_check.setToolTip(
+            "Limit Z Fly speed automatically using measured VNA latency"
+        )
         self.z_fly_speed = DoubleSpinBox(self)
         self.z_fly_speed.setRange(0.01, 1000)
         self.z_fly_speed.setDecimals(4)
@@ -1024,6 +1048,12 @@ class MeasureWidget(QGroupBox):
             QLabel("Z fly speed", self), 5, 2, alignment=Qt.AlignmentFlag.AlignLeft
         )
         g_layout.addWidget(self.z_fly_speed, 5, 3, alignment=Qt.AlignmentFlag.AlignLeft)
+        g_layout.addWidget(
+            self.auto_adjust_z_fly_speed_check,
+            5,
+            4,
+            alignment=Qt.AlignmentFlag.AlignLeft,
+        )
 
         f_layout.addRow("VNA points", self.vna_points)
         f_layout.addRow("VNA start time, s", self.vna_start_time)
@@ -1076,6 +1106,7 @@ class MeasureWidget(QGroupBox):
 
     def on_z_fly_toggled(self, enabled):
         self.z_fly_speed.setEnabled(enabled)
+        self.auto_adjust_z_fly_speed_check.setEnabled(enabled)
         if enabled:
             self.z_snake_check.setChecked(False)
             self.z_snake_check.setEnabled(False)
@@ -1132,6 +1163,7 @@ class MeasureWidget(QGroupBox):
         State.use_z_snake_pattern = self.z_snake_check.isChecked()
         State.use_z_fly_mode = self.z_fly_check.isChecked()
         State.z_fly_speed = self.z_fly_speed.value()
+        State.auto_adjust_z_fly_speed = self.auto_adjust_z_fly_speed_check.isChecked()
         State.use_rotation_sweep = self.rotation_check.isChecked()
         State.measure_vna_points = self.vna_points.value()
         State.measure_vna_start_time = self.vna_start_time.value()
@@ -1219,6 +1251,7 @@ class MeasureWidget(QGroupBox):
             use_z_snake_pattern=self.z_snake_check.isChecked(),
             use_z_fly_mode=self.z_fly_check.isChecked(),
             z_fly_speed=self.z_fly_speed.value(),
+            auto_adjust_z_fly_speed=self.auto_adjust_z_fly_speed_check.isChecked(),
             use_rotation_sweep=self.rotation_check.isChecked(),
             plot_update_hz=State.plot_update_hz,
             x_movement_delay=State.x_movement_delay,

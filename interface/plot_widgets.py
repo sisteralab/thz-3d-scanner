@@ -640,7 +640,7 @@ class BasePlotWidget(QWidget):
 
         self.late_samples_scatter = pg.ScatterPlotItem(
             size=10,
-            pen=pg.mkPen((255, 40, 40), width=2),
+            pen=pg.mkPen((120, 72, 32), width=2),
             brush=pg.mkBrush(0, 0, 0, 0),
             symbol="o",
         )
