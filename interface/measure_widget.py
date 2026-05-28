@@ -111,6 +111,7 @@ class MeasureThread(QThread):
         self._start_time = 0.0
         self._z_fast_profile = None
         self._z_fly_profile = None
+        self._last_vna_latency_s = 0.0
 
         self.measure = MeasureModel.objects.create(data=[])
         self.measure.save(False)
@@ -204,6 +205,60 @@ class MeasureThread(QThread):
             "decel": fly_accel,
         }
 
+    def _limit_z_fly_speed_for_latency(self, min_step: float, tolerance: float):
+        if not self._z_fly_profile or min_step <= 0:
+            return
+
+        requested_speed = abs(float(self._z_fly_profile.get("speed", self.z_fly_speed)))
+        if requested_speed <= 0:
+            return
+
+        latency_s = max(float(self._last_vna_latency_s), 0.001)
+        poll_s = max(0.001, float(self.fly_poll_delay_ms) / 1000.0)
+        sample_budget_s = latency_s + poll_s + 0.02
+        safe_by_sample = 0.8 * float(min_step) / sample_budget_s
+        safe_by_poll = 0.8 * (2.0 * float(tolerance)) / poll_s
+        safe_speed = max(0.001, min(safe_by_sample, safe_by_poll))
+        if requested_speed <= safe_speed:
+            return
+
+        accel = max(1.0, safe_speed / 0.8)
+        self._z_fly_profile = {
+            "speed": safe_speed,
+            "accel": accel,
+            "decel": accel,
+        }
+        self.log.emit(
+            {
+                "type": "warning",
+                "msg": (
+                    "Z fly speed limited by VNA latency: "
+                    f"requested={requested_speed:.4f}, safe={safe_speed:.4f}, "
+                    f"latency={latency_s * 1000.0:.1f} ms, step={min_step:.4f}"
+                ),
+            }
+        )
+
+    def _z_fly_ramp_distance(self):
+        if not self._z_fly_profile:
+            return 0.0
+        speed = abs(float(self._z_fly_profile.get("speed", self.z_fly_speed)))
+        accel = abs(float(self._z_fly_profile.get("accel", 0.0)))
+        if speed <= 0 or accel <= 0:
+            return 0.0
+        return float((speed * speed) / (2.0 * accel))
+
+    def _probe_vna_latency(self):
+        started = time.time()
+        State.vna.get_data()
+        self._last_vna_latency_s = time.time() - started
+        self.log.emit(
+            {
+                "type": "info",
+                "msg": f"VNA latency probe {self._last_vna_latency_s * 1000.0:.1f} ms",
+            }
+        )
+
     def _apply_z_profile(self, profile):
         if not profile:
             return
@@ -256,6 +311,7 @@ class MeasureThread(QThread):
         m_s_time = time.time()
         vna_data = State.vna.get_data()
         meas_duration = time.time() - m_s_time
+        self._last_vna_latency_s = meas_duration
         print(f"Meas time {meas_duration} s")
         z_response = z_request
         if self.use_z_sweep:
@@ -342,25 +398,30 @@ class MeasureThread(QThread):
             self._apply_z_profile(self._z_fast_profile)
             State.scanner.move_z(start_z)
             self.msleep(self.z_movement_delay)
-            first_target_z = float(z_targets[target_idx])
-            if self._capture_point(
-                full_data,
-                preview_data,
-                step_y,
-                step_x,
-                target_idx,
-                first_target_z,
-                freq_1,
-                freq_2,
-            ):
-                captured += 1
-            target_idx += 1
+            self._probe_vna_latency()
+            self._limit_z_fly_speed_for_latency(min_step, tolerance)
+            lead_distance = self._z_fly_ramp_distance() + tolerance
+            lead_start_z = start_z - direction * lead_distance
+            lead_end_z = end_z + direction * lead_distance
+            if lead_distance > 0:
+                self.log.emit(
+                    {
+                        "type": "info",
+                        "msg": (
+                            f"Z fly lead-in {lead_distance:.4f} units; "
+                            f"moving {lead_start_z:.4f} -> {lead_end_z:.4f}"
+                        ),
+                    }
+                )
+                State.scanner.move_z(lead_start_z)
+                self.msleep(self.z_movement_delay)
             # During acquisition pass, use requested constant fly speed.
             self._apply_z_profile(self._z_fly_profile)
-            State.scanner.move_z_async(end_z)
+            State.scanner.move_z_async(lead_end_z)
 
-        travel = abs(end_z - start_z)
-        expected = travel / max(abs(float(self.z_fly_speed)), 1e-6)
+        travel = abs(end_z - start_z) + 2.0 * self._z_fly_ramp_distance()
+        fly_speed = abs(float(self._z_fly_profile.get("speed", self.z_fly_speed)))
+        expected = travel / max(fly_speed, 1e-6)
         timeout_s = max(2.0, expected * 4.0 + 2.0)
         started = time.time()
 

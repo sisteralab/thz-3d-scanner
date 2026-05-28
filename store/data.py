@@ -9,6 +9,7 @@ from PySide6.QtCore import QAbstractTableModel, Qt, QModelIndex
 from PySide6.QtWidgets import QFileDialog
 
 from constants import DataTableColumns
+from utils.resources import asset_path
 
 
 class MeasureList(list):
@@ -176,8 +177,8 @@ class MeasureTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DecorationRole:
             if isinstance(value, bool):
                 if value:
-                    return QtGui.QIcon("assets/yes-icon.png")
-                return QtGui.QIcon("assets/no-icon.png")
+                    return QtGui.QIcon(asset_path("yes-icon.png"))
+                return QtGui.QIcon()
             return value
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignCenter

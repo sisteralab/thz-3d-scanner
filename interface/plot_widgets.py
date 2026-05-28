@@ -76,7 +76,7 @@ class ComplexReferenceController(QObject):
         self.selected_points = []  # [(x_idx, z_idx), ...]
         self.selected_point_set = set()
         self.selected_points_array = np.empty((0, 2), dtype=int)
-        self.collection_enabled = True
+        self.collection_enabled = False
         self.max_scatter_points = 1200
         self.max_ui_points = 30
         self.preview_ui_points = 4

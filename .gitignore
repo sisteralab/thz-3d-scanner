@@ -7,3 +7,4 @@ build
 *.code
 data
 settings.ini
+/Scanner3D.spec

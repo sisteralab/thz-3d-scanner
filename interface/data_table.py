@@ -17,6 +17,7 @@ from constants import DataTableColumns
 from interface.comment_dialog import CommentDialogBox
 from interface.plot_widgets import DataVisualizationWindow
 from store.data import MeasureTableModel, MeasureManager, MeasureModel
+from utils.resources import asset_path
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,11 @@ class TableView(QtWidgets.QTableView):
         self.action_save.setText("Save")
         self.action_delete.setText("Delete")
 
-        self.action_comment.setIcon(QtGui.QIcon("assets/edit-icon.png"))
-        self.action_save.setIcon(QtGui.QIcon("assets/save-icon.png"))
-        self.action_delete.setIcon(QtGui.QIcon("assets/delete-icon.png"))
+        self.action_comment.setIcon(QtGui.QIcon(asset_path("edit-icon.png")))
+        self.action_save.setIcon(QtGui.QIcon(asset_path("save-icon.png")))
+        self.action_delete.setIcon(QtGui.QIcon(asset_path("delete-icon.png")))
         self.action_build = QAction("Build", self)
-        self.action_build.setIcon(QtGui.QIcon("assets/yes-icon.png"))
+        self.action_build.setIcon(QtGui.QIcon(asset_path("yes-icon.png")))
 
         self.menu.addAction(self.action_comment)
         self.menu.addAction(self.action_save)

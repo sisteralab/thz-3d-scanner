@@ -1,9 +1,11 @@
 from PySide6 import QtCore, QtGui
 from PySide6.QtWidgets import QPushButton
 
+from utils.resources import asset_path
+
 
 class Button(QPushButton):
-    loading_gif = "./assets/loading.gif"
+    loading_gif = asset_path("loading.gif")
 
     def __init__(
         self, *args, animate: bool = False, icon: QtGui.QIcon = None, **kwargs
