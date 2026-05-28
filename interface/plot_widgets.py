@@ -50,7 +50,16 @@ def extract_xz_slice(data, y_index):
     y_idx = int(np.clip(y_index, 0, y_len - 1))
 
     sliced = dict(data)
-    for key in ("amplitude", "phase", "complex_real", "complex_imag"):
+    for key in (
+        "amplitude",
+        "phase",
+        "complex_real",
+        "complex_imag",
+        "z_request",
+        "z_response",
+        "vna_latency_ms",
+        "late_sample",
+    ):
         arr = np.asarray(data.get(key, []))
         if arr.ndim == 3 and arr.shape[0] == y_len:
             sliced[key] = arr[y_idx]
@@ -629,6 +638,15 @@ class BasePlotWidget(QWidget):
         )
         self.plot_item.addItem(self.reference_points_scatter)
 
+        self.late_samples_scatter = pg.ScatterPlotItem(
+            size=10,
+            pen=pg.mkPen((255, 40, 40), width=2),
+            brush=pg.mkBrush(0, 0, 0, 0),
+            symbol="o",
+        )
+        self.late_samples_scatter.setZValue(9)
+        self.plot_item.addItem(self.late_samples_scatter)
+
         self.roi = pg.ROI([0, 0], [10, 2], pen=(0, 9))
         self.roi.addScaleHandle([0.5, 1], [0.5, 0.5])
         self.roi.addScaleHandle([0, 0.5], [0.5, 0.5])
@@ -655,6 +673,8 @@ class BasePlotWidget(QWidget):
         self.x_axis = np.array([])
         self.z_axis = np.array([])
         self._last_markers_render_key = None
+        self.show_late_samples = True
+        self.max_late_sample_markers = 5000
 
         # Throttle updates to limit FPS and reduce CPU/GPU load
         self._update_timer = QTimer(self)
@@ -762,8 +782,13 @@ class BasePlotWidget(QWidget):
         value = float(self.display_data[x_idx, z_idx])
         x_coord = float(self.x_axis[x_idx])
         z_coord = float(self.z_axis[z_idx])
+        late_text = ""
+        late_mask = np.asarray(self.current_data.get("late_sample", []), dtype=bool)
+        if late_mask.shape == self.display_data.shape and late_mask[x_idx, z_idx]:
+            late_text = " | late sample"
         self.plot_item.setTitle(
             f"{self.title}: {value:.3f}, X: {x_coord:.3f} mm, Z: {z_coord:.3f} mm"
+            f"{late_text}"
         )
 
     def mouse_clicked(self, mouse_event):
@@ -875,7 +900,40 @@ class BasePlotWidget(QWidget):
         transform.scale(float(x_step), float(z_step))
         self.image_item.setTransform(transform)
 
+        self.update_late_sample_markers()
         self._schedule_roi_update()
+
+    def set_late_sample_markers_visible(self, visible):
+        self.show_late_samples = bool(visible)
+        self.update_late_sample_markers()
+
+    def update_late_sample_markers(self):
+        if (
+            not self.show_late_samples
+            or self.current_data is None
+            or self.display_data is None
+        ):
+            self.late_samples_scatter.clear()
+            return
+
+        late_mask = np.asarray(self.current_data.get("late_sample", []), dtype=bool)
+        if late_mask.shape != self.display_data.shape:
+            self.late_samples_scatter.clear()
+            return
+
+        points = np.argwhere(late_mask)
+        if points.size == 0:
+            self.late_samples_scatter.clear()
+            return
+
+        if points.shape[0] > self.max_late_sample_markers:
+            stride = int(np.ceil(points.shape[0] / self.max_late_sample_markers))
+            points = points[::stride]
+
+        self.late_samples_scatter.setData(
+            x=self.x_axis[points[:, 0]],
+            y=self.z_axis[points[:, 1]],
+        )
 
     def _schedule_roi_update(self):
         """Schedule a throttled ROI plot update."""
@@ -1005,7 +1063,13 @@ class DataVisualizationWindow(QWidget):
         self.drop_raw_checkbox.setToolTip(
             "When enabled, raw VNA traces are not held in this window to reduce RAM usage."
         )
+        self.show_late_samples_checkbox = QCheckBox("Show late samples")
+        self.show_late_samples_checkbox.setChecked(True)
+        self.show_late_samples_checkbox.setToolTip(
+            "Show points measured after the scanner already passed their target."
+        )
         controls_layout.addWidget(self.drop_raw_checkbox)
+        controls_layout.addWidget(self.show_late_samples_checkbox)
         controls_layout.addStretch(1)
         main_layout.addLayout(controls_layout)
 
@@ -1036,11 +1100,18 @@ class DataVisualizationWindow(QWidget):
 
         self.setLayout(main_layout)
         self.drop_raw_checkbox.toggled.connect(self._on_drop_raw_toggled)
+        self.show_late_samples_checkbox.toggled.connect(
+            self._set_late_sample_markers_visible
+        )
         self.update_data(data)
 
     def _apply_corrected_data(self, data):
         self.amplitude_widget.update_data(data)
         self.phase_widget.update_data(data)
+
+    def _set_late_sample_markers_visible(self, visible):
+        self.amplitude_widget.set_late_sample_markers_visible(visible)
+        self.phase_widget.set_late_sample_markers_visible(visible)
 
     def _prepare_view_data(self, data):
         if (

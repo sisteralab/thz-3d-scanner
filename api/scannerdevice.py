@@ -277,6 +277,25 @@ class ScannerDevice:
         for device_id in self._iter_device_ids():
             self.lib.command_stop(device_id)
 
+    def soft_stop(self, device_id):
+        """
+        Stop selected axis using the controller deceleration profile.
+        """
+        self._require_device(device_id, "Selected")
+        result = self.lib.command_sstp(device_id)
+        if result != Result.Ok:
+            self._raise_result_error("Failed to soft-stop axis", result)
+
+    def soft_stop_all(self):
+        """
+        Stop all connected axes using their configured deceleration profiles.
+        """
+        for device_id in self._iter_device_ids():
+            try:
+                self.soft_stop(device_id)
+            except Exception:
+                logger.exception("Failed to soft-stop axis")
+
     def dwell(self, duration):
         """
         Sleeps for a specified amount of time.

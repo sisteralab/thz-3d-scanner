@@ -301,6 +301,8 @@ class MeasureThread(QThread):
         z_target,
         freq_1,
         freq_2,
+        late_sample=False,
+        sample_tolerance=None,
     ):
         z_request = float(z_target)
         if self.use_z_sweep:
@@ -348,6 +350,14 @@ class MeasureThread(QThread):
         full_data["vna_latency_ms"][step_y][step_x][z_idx] = float(
             meas_duration * 1000.0
         )
+        if sample_tolerance is not None:
+            tolerance = abs(float(sample_tolerance))
+            late_sample = (
+                late_sample
+                or abs(z_request - float(z_target)) > tolerance
+                or abs(z_response - float(z_target)) > tolerance
+            )
+        full_data["late_sample"][step_y][step_x][z_idx] = bool(late_sample)
 
         # Emit only lightweight data needed by live plots, throttled to avoid GUI backlog.
         self._emit_preview_data(preview_data)
@@ -428,7 +438,7 @@ class MeasureThread(QThread):
         while target_idx < z_targets.size:
             if not State.measure_running:
                 try:
-                    State.scanner.stop(State.scanner.id_z)
+                    State.scanner.soft_stop(State.scanner.id_z)
                 except Exception:
                     pass
                 break
@@ -447,6 +457,7 @@ class MeasureThread(QThread):
                     target_z,
                     freq_1,
                     freq_2,
+                    sample_tolerance=min_step,
                 ):
                     captured += 1
                 target_idx += 1
@@ -456,7 +467,21 @@ class MeasureThread(QThread):
                 direction < 0 and delta < -tolerance
             )
             if overshoot:
-                missed += 1
+                if self._capture_point(
+                    full_data,
+                    preview_data,
+                    step_y,
+                    step_x,
+                    target_idx,
+                    target_z,
+                    freq_1,
+                    freq_2,
+                    late_sample=True,
+                    sample_tolerance=min_step,
+                ):
+                    captured += 1
+                else:
+                    missed += 1
                 target_idx += 1
                 continue
 
@@ -567,6 +592,9 @@ class MeasureThread(QThread):
                             State.scanner.id_rotation,
                             State.scanner.rotation_unit,
                         )
+                        if not State.measure_running:
+                            stop_requested = True
+                            break
                         State.scanner.move_rotation(
                             float(rotation_angle),
                             timeout_s=self._rotation_move_timeout_s(
@@ -574,7 +602,13 @@ class MeasureThread(QThread):
                                 rotation_angle,
                             ),
                         )
+                        if not State.measure_running:
+                            stop_requested = True
+                            break
                         self.msleep(self.no_movement_delay)
+                        if not State.measure_running:
+                            stop_requested = True
+                            break
 
                     full_data = {
                         "freq_1": freq_1,
@@ -603,6 +637,10 @@ class MeasureThread(QThread):
                         "z_response": np.zeros(
                             (len(self.y_range), len(self.x_range), len(self.z_range))
                         ).tolist(),
+                        "late_sample": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range)),
+                            dtype=bool,
+                        ).tolist(),
                         "vna_latency_ms": np.zeros(
                             (len(self.y_range), len(self.x_range), len(self.z_range))
                         ).tolist(),
@@ -622,20 +660,33 @@ class MeasureThread(QThread):
                         "complex_imag": full_data["complex_imag"],
                         "z_request": full_data["z_request"],
                         "z_response": full_data["z_response"],
+                        "late_sample": full_data["late_sample"],
                         "vna_latency_ms": full_data["vna_latency_ms"],
                     }
                     angle_has_data = False
 
                     for step_y, y in enumerate(self.y_range):
+                        if not State.measure_running:
+                            stop_requested = True
+                            break
                         if self.use_y_sweep:
                             State.scanner.move_y(y)
+                            if not State.measure_running:
+                                stop_requested = True
+                                break
                             self.msleep(self.y_movement_delay)
                         if not State.measure_running:
                             stop_requested = True
                             break
                         for step_x, x in enumerate(self.x_range):
+                            if not State.measure_running:
+                                stop_requested = True
+                                break
                             if self.use_x_sweep:
                                 State.scanner.move_x(x)
+                                if not State.measure_running:
+                                    stop_requested = True
+                                    break
                                 self.msleep(self.x_movement_delay)
                             if not State.measure_running:
                                 stop_requested = True
@@ -666,12 +717,21 @@ class MeasureThread(QThread):
                                     z_indices = range(len(self.z_range))
 
                                 for z_idx in z_indices:
+                                    if not State.measure_running:
+                                        stop_requested = True
+                                        break
                                     z = self.z_range[z_idx]
                                     if self.use_z_sweep:
                                         State.scanner.move_z(z)
+                                        if not State.measure_running:
+                                            stop_requested = True
+                                            break
                                         self.msleep(self.z_movement_delay)
                                     else:
                                         self.msleep(self.no_movement_delay)
+                                    if not State.measure_running:
+                                        stop_requested = True
+                                        break
 
                                     if self._capture_point(
                                         full_data,
@@ -1212,7 +1272,7 @@ class MeasureWidget(QGroupBox):
             State.measure_running = False
             if State.scanner:
                 try:
-                    State.scanner.emergency_stop()
+                    State.scanner.soft_stop_all()
                 except Exception as err:
                     logger.warning(f"Failed to stop scanner axes: {err}")
 

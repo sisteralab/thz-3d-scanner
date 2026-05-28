@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QApplication,
+    QCheckBox,
 )
 
 from interface.log import LogHandler, LogWidget
@@ -56,6 +57,11 @@ class MainWindow(QMainWindow):
         self.reference_widget = ComplexReferenceWidget(self.reference_controller)
         self.rotation_slice_widget = RotationSliceSelectorWidget()
         self.y_slice_widget = YSliceSelectorWidget()
+        self.show_late_samples_checkbox = QCheckBox("Show late samples", self)
+        self.show_late_samples_checkbox.setChecked(True)
+        self.show_late_samples_checkbox.setToolTip(
+            "Show points measured after the scanner already passed their target."
+        )
         self.reference_controller.corrected_data_ready.connect(
             self._apply_corrected_data
         )
@@ -63,6 +69,9 @@ class MainWindow(QMainWindow):
             self._on_rotation_slice_changed
         )
         self.y_slice_widget.y_index_changed.connect(self._on_y_slice_changed)
+        self.show_late_samples_checkbox.toggled.connect(
+            self._set_late_sample_markers_visible
+        )
 
         self.log_widget = LogWidget(self)
         self.memory_monitor = MemoryMonitor(self)
@@ -74,6 +83,7 @@ class MainWindow(QMainWindow):
 
         left_layout.addWidget(self.rotation_slice_widget)
         left_layout.addWidget(self.y_slice_widget)
+        left_layout.addWidget(self.show_late_samples_checkbox)
         left_layout.addWidget(self.reference_widget)
         left_layout.addLayout(plots_layout)
         left_layout.addWidget(self.log_widget)
@@ -200,6 +210,10 @@ class MainWindow(QMainWindow):
         """Apply corrected data after complex reference subtraction."""
         self.amplitude_widget.update_data(data)
         self.phase_widget.update_data(data)
+
+    def _set_late_sample_markers_visible(self, visible):
+        self.amplitude_widget.set_late_sample_markers_visible(visible)
+        self.phase_widget.set_late_sample_markers_visible(visible)
 
     def closeEvent(self, event: QtGui.QCloseEvent):
         State.del_scanner()

@@ -268,7 +268,11 @@ class RotationMeasureThread(QThread):
                 direction < 0 and delta < -tolerance
             )
             if overshoot:
-                missed += 1
+                if self._capture_at_angle(target_angle, result):
+                    captured += 1
+                    self.progress.emit(int(round(captured * 100 / targets.size)))
+                else:
+                    missed += 1
                 target_idx += 1
                 continue
 
@@ -288,7 +292,7 @@ class RotationMeasureThread(QThread):
 
         if not self._running:
             try:
-                State.scanner.stop(State.scanner.id_rotation)
+                State.scanner.soft_stop(State.scanner.id_rotation)
             except Exception:
                 pass
 
@@ -508,6 +512,11 @@ class RotationMeasureWidget(QWidget):
     def stop_measure(self):
         if self.measure_thread and self.measure_thread.isRunning():
             self.measure_thread.request_stop()
+            if State.scanner:
+                try:
+                    State.scanner.soft_stop_all()
+                except Exception as err:
+                    logger.warning(f"Failed to stop scanner axes: {err}")
             self.status_label.setText("Stopping")
 
     def add_point(self, point):
