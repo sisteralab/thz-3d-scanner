@@ -15,9 +15,15 @@ class ScannerDevice:
         y_port: str,
         z_port: str,
         rotation_port: str = "",
+        x_distance_per_step: float = 0.0125,
+        y_distance_per_step: float = 0.0125,
+        z_distance_per_step: float = 0.0125,
         rotation_degrees_per_step: float = 0.01,
     ):
         self.user_unit = None
+        self.x_unit = None
+        self.y_unit = None
+        self.z_unit = None
         self.rotation_unit = None
         self.steps_per_revolution = 200
         self.lead_screw_pitch = 2.5
@@ -32,6 +38,9 @@ class ScannerDevice:
         self.rotation_port = (
             f"xi-com:\\\\.\\{rotation_port}" if rotation_port.strip() else ""
         )
+        self.x_distance_per_step = float(x_distance_per_step)
+        self.y_distance_per_step = float(y_distance_per_step)
+        self.z_distance_per_step = float(z_distance_per_step)
         self.rotation_degrees_per_step = float(rotation_degrees_per_step)
 
         if self.lib:
@@ -173,22 +182,44 @@ class ScannerDevice:
         """
         Choose the scale factor: conversion factor which is equal to the number of millimeters/inches per one step
         """
-        user_unit = calibration_t()
-        user_unit.A = 0.0125  # linear movement for one step
-        user_unit.MicrostepMode = 9
+        self.x_unit = self._create_calibration(self.x_distance_per_step)
+        self.y_unit = self._create_calibration(self.y_distance_per_step)
+        self.z_unit = self._create_calibration(self.z_distance_per_step)
+        self.user_unit = self.x_unit
+        logger.info(f"X scale factor set to: {self.x_unit.A} mm/step")
+        logger.info(f"Y scale factor set to: {self.y_unit.A} mm/step")
+        logger.info(f"Z scale factor set to: {self.z_unit.A} mm/step")
 
-        user_unit.A = 0.0125
-        self.user_unit = user_unit
-        logger.info(f"Scale factor set to: {user_unit.A} mm/step")
+        self.rotation_unit = self._create_calibration(self.rotation_degrees_per_step)
+        logger.info(f"Rotation scale factor set to: {self.rotation_unit.A} deg/step")
 
-        rotation_unit = calibration_t()
-        rotation_unit.A = self.rotation_degrees_per_step
-        rotation_unit.MicrostepMode = 9
-        self.rotation_unit = rotation_unit
-        logger.info(f"Rotation scale factor set to: {rotation_unit.A} deg/step")
+    @staticmethod
+    def _create_calibration(scale):
+        unit = calibration_t()
+        unit.A = float(scale)
+        unit.MicrostepMode = 9
+        return unit
+
+    def _get_device_calibration(self, device_id):
+        if device_id == self.id_x:
+            return self.x_unit
+        if device_id == self.id_y:
+            return self.y_unit
+        if device_id == self.id_z:
+            return self.z_unit
+        if device_id == self.id_rotation:
+            return self.rotation_unit
+        return self.user_unit
 
     def _get_calibration(self, calibration=None):
         return calibration if calibration is not None else self.user_unit
+
+    def _resolve_calibration(self, device_id, calibration=None):
+        return (
+            calibration
+            if calibration is not None
+            else self._get_device_calibration(device_id)
+        )
 
     def set_move_settings(self, device_id, speed, asel, decel, calibration=None):
         """
@@ -208,7 +239,9 @@ class ScannerDevice:
 
         # Writing data to the controller
         result = self.lib.set_move_settings_calb(
-            device_id, byref(mvst), byref(self._get_calibration(calibration))
+            device_id,
+            byref(mvst),
+            byref(self._resolve_calibration(device_id, calibration)),
         )
         return result == Result.Ok
 
@@ -223,7 +256,11 @@ class ScannerDevice:
             return None
 
         mvst = move_settings_calb_t()
-        result = fn(device_id, byref(mvst), byref(self._get_calibration(calibration)))
+        result = fn(
+            device_id,
+            byref(mvst),
+            byref(self._resolve_calibration(device_id, calibration)),
+        )
         if result != Result.Ok:
             return None
 
@@ -274,7 +311,9 @@ class ScannerDevice:
         self._require_device(device_id, "Selected")
         x_pos = get_position_calb_t()
         result = self.lib.get_position_calb(
-            device_id, byref(x_pos), byref(self._get_calibration(calibration))
+            device_id,
+            byref(x_pos),
+            byref(self._resolve_calibration(device_id, calibration)),
         )
         if result == Result.Ok:
             pass
@@ -361,7 +400,9 @@ class ScannerDevice:
         """
         self._require_device(device_id, "Selected")
         result = self.lib.command_move_calb(
-            device_id, c_float(position), byref(self._get_calibration(calibration))
+            device_id,
+            c_float(position),
+            byref(self._resolve_calibration(device_id, calibration)),
         )
         if result != Result.Ok:
             raise RuntimeError(f"Failed to move axis {device_id}: {result}")
@@ -373,7 +414,7 @@ class ScannerDevice:
         :param position: the position of the destination.
         """
         self._require_device(self.id_x, "X")
-        self._command_move_calb_checked("X", position, self.user_unit)
+        self._command_move_calb_checked("X", position, self.x_unit)
 
     def move_y(self, position):
         """
@@ -381,7 +422,7 @@ class ScannerDevice:
         :param position: the position of the destination.
         """
         self._require_device(self.id_y, "Y")
-        self._command_move_calb_checked("Y", position, self.user_unit)
+        self._command_move_calb_checked("Y", position, self.y_unit)
 
     def move_z(self, position):
         """
@@ -389,7 +430,7 @@ class ScannerDevice:
         :param position: the position of the destination
         """
         self._require_device(self.id_z, "Z")
-        self._command_move_calb_checked("Z", position, self.user_unit)
+        self._command_move_calb_checked("Z", position, self.z_unit)
 
     def move_z_async(self, position):
         """
@@ -397,7 +438,7 @@ class ScannerDevice:
         :param position: destination position in user units.
         """
         self._require_device(self.id_z, "Z")
-        self._command_move_calb_checked("Z", position, self.user_unit, async_move=True)
+        self._command_move_calb_checked("Z", position, self.z_unit, async_move=True)
 
     def move_rotation(self, position, timeout_s: float = 300.0):
         """
@@ -427,7 +468,9 @@ class ScannerDevice:
         """
         self._require_device(device_id, "Selected")
         self.lib.command_movr_calb(
-            device_id, c_float(distance), byref(self._get_calibration(calibration))
+            device_id,
+            c_float(distance),
+            byref(self._resolve_calibration(device_id, calibration)),
         )
         self.wait_for_stop()
 
@@ -437,7 +480,7 @@ class ScannerDevice:
         :param distance: size of the offset in user units.
         """
         self._require_device(self.id_x, "X")
-        self.lib.command_movr_calb(self.id_x, c_float(distance), byref(self.user_unit))
+        self.lib.command_movr_calb(self.id_x, c_float(distance), byref(self.x_unit))
         self.wait_for_stop()
 
     def shift_y(self, distance):
@@ -446,7 +489,7 @@ class ScannerDevice:
         :param distance: size of the offset in user units.
         """
         self._require_device(self.id_y, "Y")
-        self.lib.command_movr_calb(self.id_y, c_float(distance), byref(self.user_unit))
+        self.lib.command_movr_calb(self.id_y, c_float(distance), byref(self.y_unit))
         self.wait_for_stop()
 
     def shift_z(self, distance):
@@ -455,7 +498,7 @@ class ScannerDevice:
         :param distance: size of the offset in user units.
         """
         self._require_device(self.id_z, "Z")
-        self.lib.command_movr_calb(self.id_z, c_float(distance), byref(self.user_unit))
+        self.lib.command_movr_calb(self.id_z, c_float(distance), byref(self.z_unit))
         self.wait_for_stop()
 
     def shift_rotation(self, distance):
@@ -485,7 +528,9 @@ class ScannerDevice:
         hmst.HomeDelta = float(home_delta)
 
         # Writing data to the controller
-        self.lib.set_home_settings_calb(device_id, byref(hmst), byref(self.user_unit))
+        self.lib.set_home_settings_calb(
+            device_id, byref(hmst), byref(self._get_device_calibration(device_id))
+        )
 
         self.lib.home_settings_calb_t(fast_home, slow_home, home_delta)
 

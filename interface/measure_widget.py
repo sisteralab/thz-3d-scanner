@@ -172,8 +172,9 @@ class MeasureThread(QThread):
             return
 
         fly_speed = float(self.z_fly_speed)
-        fallback_fast_speed = max(20.0, fly_speed * 8.0)
-        fallback_fast_accel = max(1.0, fallback_fast_speed / 1.5)
+        fallback_fast_speed = float(State.scanner_z_speed)
+        fallback_fast_accel = float(State.scanner_z_accel)
+        fallback_fast_decel = float(State.scanner_z_decel)
 
         try:
             self._z_fast_profile = State.scanner.get_move_settings(State.scanner.id_z)
@@ -185,41 +186,17 @@ class MeasureThread(QThread):
             self._z_fast_profile = {
                 "speed": fallback_fast_speed,
                 "accel": fallback_fast_accel,
-                "decel": fallback_fast_accel,
+                "decel": fallback_fast_decel,
             }
             self.log.emit(
                 {
                     "type": "warning",
                     "msg": (
                         "Could not read default Z move profile; "
-                        f"using fallback fast profile speed={fallback_fast_speed:.2f}."
+                        "using Scanner Init Z move profile."
                     ),
                 }
             )
-        else:
-            current_fast_speed = float(self._z_fast_profile.get("speed", 0.0))
-            if current_fast_speed <= max(1.0, fly_speed * 1.5):
-                self.log.emit(
-                    {
-                        "type": "warning",
-                        "msg": (
-                            "Detected low Z default profile; boosting fast profile for "
-                            f"non-measurement moves to speed={fallback_fast_speed:.2f}."
-                        ),
-                    }
-                )
-                self._z_fast_profile = {
-                    "speed": fallback_fast_speed,
-                    "accel": fallback_fast_accel,
-                    "decel": fallback_fast_accel,
-                }
-            else:
-                self._z_fast_profile = self._smooth_move_profile(
-                    self._z_fast_profile,
-                    ramp_time_s=1.5,
-                    min_accel=1.0,
-                )
-
         fly_accel = max(1.0, fly_speed / 0.8)
         self._z_fly_profile = {
             "speed": fly_speed,

@@ -80,8 +80,9 @@ class RotationMeasureThread(QThread):
         return profile
 
     def _build_rotation_profiles(self):
-        fallback_fast_speed = max(20.0, self.fly_speed * 8.0)
-        fallback_fast_accel = max(1.0, fallback_fast_speed / 1.5)
+        fallback_fast_speed = float(State.scanner_rotation_speed)
+        fallback_fast_accel = float(State.scanner_rotation_accel)
+        fallback_fast_decel = float(State.scanner_rotation_decel)
         try:
             self._rotation_fast_profile = State.scanner.get_move_settings(
                 State.scanner.id_rotation,
@@ -94,22 +95,16 @@ class RotationMeasureThread(QThread):
             self._rotation_fast_profile = {
                 "speed": fallback_fast_speed,
                 "accel": fallback_fast_accel,
-                "decel": fallback_fast_accel,
+                "decel": fallback_fast_decel,
             }
             self.log.emit(
                 {
                     "type": "warning",
                     "msg": (
                         "Could not read default rotation move profile; "
-                        f"using fallback speed={fallback_fast_speed:.2f}."
+                        "using Scanner Init rotation move profile."
                     ),
                 }
-            )
-        else:
-            self._rotation_fast_profile = self._smooth_move_profile(
-                self._rotation_fast_profile,
-                ramp_time_s=1.5,
-                min_accel=1.0,
             )
 
         fly_accel = max(1.0, self.fly_speed / 0.8)

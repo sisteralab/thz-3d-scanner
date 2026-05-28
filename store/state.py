@@ -91,8 +91,35 @@ class State:
     scanner_y_port: str = settings.value("Scanner/y_port", "COM6")
     scanner_z_port: str = settings.value("Scanner/z_port", "COM7")
     scanner_rotation_port: str = settings.value("Scanner/rotation_port", "COM8")
+    scanner_x_distance_per_step: float = float(
+        settings.value("Scanner/x_distance_per_step", 0.0125)
+    )
+    scanner_y_distance_per_step: float = float(
+        settings.value("Scanner/y_distance_per_step", 0.0125)
+    )
+    scanner_z_distance_per_step: float = float(
+        settings.value("Scanner/z_distance_per_step", 0.0125)
+    )
     scanner_rotation_degrees_per_step: float = float(
         settings.value("Scanner/rotation_degrees_per_step", 0.01)
+    )
+    scanner_x_speed: float = float(settings.value("Scanner/x_speed", 20.0))
+    scanner_x_accel: float = float(settings.value("Scanner/x_accel", 10.0))
+    scanner_x_decel: float = float(settings.value("Scanner/x_decel", 10.0))
+    scanner_y_speed: float = float(settings.value("Scanner/y_speed", 20.0))
+    scanner_y_accel: float = float(settings.value("Scanner/y_accel", 10.0))
+    scanner_y_decel: float = float(settings.value("Scanner/y_decel", 10.0))
+    scanner_z_speed: float = float(settings.value("Scanner/z_speed", 20.0))
+    scanner_z_accel: float = float(settings.value("Scanner/z_accel", 10.0))
+    scanner_z_decel: float = float(settings.value("Scanner/z_decel", 10.0))
+    scanner_rotation_speed: float = float(
+        settings.value("Scanner/rotation_speed", 10.0)
+    )
+    scanner_rotation_accel: float = float(
+        settings.value("Scanner/rotation_accel", 10.0)
+    )
+    scanner_rotation_decel: float = float(
+        settings.value("Scanner/rotation_decel", 10.0)
     )
 
     # VNA device configuration
@@ -145,9 +172,30 @@ class State:
         cls.settings.setValue("Scanner/z_port", cls.scanner_z_port)
         cls.settings.setValue("Scanner/rotation_port", cls.scanner_rotation_port)
         cls.settings.setValue(
+            "Scanner/x_distance_per_step", cls.scanner_x_distance_per_step
+        )
+        cls.settings.setValue(
+            "Scanner/y_distance_per_step", cls.scanner_y_distance_per_step
+        )
+        cls.settings.setValue(
+            "Scanner/z_distance_per_step", cls.scanner_z_distance_per_step
+        )
+        cls.settings.setValue(
             "Scanner/rotation_degrees_per_step",
             cls.scanner_rotation_degrees_per_step,
         )
+        cls.settings.setValue("Scanner/x_speed", cls.scanner_x_speed)
+        cls.settings.setValue("Scanner/x_accel", cls.scanner_x_accel)
+        cls.settings.setValue("Scanner/x_decel", cls.scanner_x_decel)
+        cls.settings.setValue("Scanner/y_speed", cls.scanner_y_speed)
+        cls.settings.setValue("Scanner/y_accel", cls.scanner_y_accel)
+        cls.settings.setValue("Scanner/y_decel", cls.scanner_y_decel)
+        cls.settings.setValue("Scanner/z_speed", cls.scanner_z_speed)
+        cls.settings.setValue("Scanner/z_accel", cls.scanner_z_accel)
+        cls.settings.setValue("Scanner/z_decel", cls.scanner_z_decel)
+        cls.settings.setValue("Scanner/rotation_speed", cls.scanner_rotation_speed)
+        cls.settings.setValue("Scanner/rotation_accel", cls.scanner_rotation_accel)
+        cls.settings.setValue("Scanner/rotation_decel", cls.scanner_rotation_decel)
 
         cls.settings.setValue("VNA/host", cls.vna_host)
         cls.settings.setValue("VNA/port", cls.vna_port)
@@ -210,6 +258,9 @@ class State:
             y_port=cls.scanner_y_port,
             z_port=cls.scanner_z_port,
             rotation_port=cls.scanner_rotation_port,
+            x_distance_per_step=cls.scanner_x_distance_per_step,
+            y_distance_per_step=cls.scanner_y_distance_per_step,
+            z_distance_per_step=cls.scanner_z_distance_per_step,
             rotation_degrees_per_step=cls.scanner_rotation_degrees_per_step,
         )
         status = cls.scanner.connect_devices()
@@ -217,7 +268,53 @@ class State:
             cls.del_scanner()
             return False
         cls.scanner.set_units()
+        cls.apply_scanner_move_settings()
         return True
+
+    @classmethod
+    def apply_scanner_move_settings(cls):
+        if not cls.scanner:
+            return
+
+        axis_settings = (
+            (
+                cls.scanner.id_x,
+                cls.scanner_x_speed,
+                cls.scanner_x_accel,
+                cls.scanner_x_decel,
+                cls.scanner.x_unit,
+            ),
+            (
+                cls.scanner.id_y,
+                cls.scanner_y_speed,
+                cls.scanner_y_accel,
+                cls.scanner_y_decel,
+                cls.scanner.y_unit,
+            ),
+            (
+                cls.scanner.id_z,
+                cls.scanner_z_speed,
+                cls.scanner_z_accel,
+                cls.scanner_z_decel,
+                cls.scanner.z_unit,
+            ),
+            (
+                cls.scanner.id_rotation,
+                cls.scanner_rotation_speed,
+                cls.scanner_rotation_accel,
+                cls.scanner_rotation_decel,
+                cls.scanner.rotation_unit,
+            ),
+        )
+        for device_id, speed, accel, decel, calibration in axis_settings:
+            if device_id:
+                cls.scanner.set_move_settings(
+                    device_id,
+                    speed,
+                    accel,
+                    decel,
+                    calibration,
+                )
 
     @classmethod
     def init_vna(cls) -> bool:
