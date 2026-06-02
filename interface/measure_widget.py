@@ -72,6 +72,11 @@ class MeasureThread(QThread):
         z_movement_delay=200,
         no_movement_delay=50,
         fly_poll_delay_ms=5,
+        center_calibration_enabled=False,
+        center_calibration_x=0.0,
+        center_calibration_y=0.0,
+        center_calibration_z=0.0,
+        center_calibration_period_lines=0,
     ):
         super().__init__()
         self.x_range = x_range
@@ -108,6 +113,14 @@ class MeasureThread(QThread):
         self.z_movement_delay = z_movement_delay
         self.no_movement_delay = no_movement_delay
         self.fly_poll_delay_ms = fly_poll_delay_ms
+        self.center_calibration_enabled = bool(center_calibration_enabled)
+        self.center_calibration_x = float(center_calibration_x)
+        self.center_calibration_y = float(center_calibration_y)
+        self.center_calibration_z = float(center_calibration_z)
+        self.center_calibration_period_lines = max(
+            0,
+            int(center_calibration_period_lines),
+        )
         self._step_counter = 0
         self._total_steps = 0
         self._start_time = 0.0
@@ -368,6 +381,115 @@ class MeasureThread(QThread):
         self._update_progress()
         return True
 
+    def _calibration_enabled(self):
+        return (
+            self.center_calibration_enabled and self.center_calibration_period_lines > 0
+        )
+
+    def _calibration_count_per_angle(self):
+        if not self._calibration_enabled():
+            return 0
+        full_z_lines = len(self.y_range) * len(self.x_range)
+        return full_z_lines // self.center_calibration_period_lines
+
+    @staticmethod
+    def _get_axis_position(axis_id):
+        try:
+            return float(State.scanner.get_position(axis_id))
+        except Exception:
+            return None
+
+    def _capture_center_calibration(
+        self,
+        full_data,
+        line_number,
+        step_y,
+        step_x,
+        freq_1,
+        freq_2,
+        rotation_angle,
+    ):
+        if not self._calibration_enabled() or not State.measure_running:
+            return False
+
+        target_x = self.center_calibration_x
+        target_y = self.center_calibration_y
+        target_z = self.center_calibration_z
+
+        if State.scanner.id_y:
+            State.scanner.move_y(target_y)
+            if not State.measure_running:
+                return False
+            self.msleep(self.y_movement_delay)
+        if State.scanner.id_x:
+            State.scanner.move_x(target_x)
+            if not State.measure_running:
+                return False
+            self.msleep(self.x_movement_delay)
+        if State.scanner.id_z:
+            State.scanner.move_z(target_z)
+            if not State.measure_running:
+                return False
+            self.msleep(self.z_movement_delay)
+
+        meas_start = time.time()
+        vna_data = State.vna.get_data()
+        meas_duration = time.time() - meas_start
+        self._last_vna_latency_s = meas_duration
+
+        real = np.asarray(vna_data.get("real", []), dtype=np.float32)
+        imag = np.asarray(vna_data.get("imag", []), dtype=np.float32)
+        points_count = int(min(real.size, imag.size))
+        if points_count == 0:
+            return False
+
+        mean_real = float(np.mean(real[:points_count], dtype=np.float64))
+        mean_imag = float(np.mean(imag[:points_count], dtype=np.float64))
+        amplitude = float(20 * np.log10(max(np.hypot(mean_real, mean_imag), 1e-12)))
+        phase = float(np.arctan2(mean_imag, mean_real))
+
+        calibration_points = full_data.setdefault("calibration_points", [])
+        calibration_points.append(
+            {
+                "line_number": int(line_number),
+                "after_y_index": int(step_y),
+                "after_x_index": int(step_x),
+                "after_y": float(self.y_range[step_y]),
+                "after_x": float(self.x_range[step_x]),
+                "target_x": float(target_x),
+                "target_y": float(target_y),
+                "target_z": float(target_z),
+                "actual_x": self._get_axis_position(State.scanner.id_x),
+                "actual_y": self._get_axis_position(State.scanner.id_y),
+                "actual_z": self._get_axis_position(State.scanner.id_z),
+                "freq_1": float(freq_1),
+                "freq_2": float(freq_2),
+                "amp_1": full_data.get("amp_1"),
+                "amp_2": full_data.get("amp_2"),
+                "rotation_angle": float(rotation_angle),
+                "complex_real": mean_real,
+                "complex_imag": mean_imag,
+                "amplitude": amplitude,
+                "phase": phase,
+                "vna_latency_ms": float(meas_duration * 1000.0),
+                "elapsed_s": float(time.time() - self._start_time),
+            }
+        )
+        self.log.emit(
+            {
+                "type": "info",
+                "msg": (
+                    "Center calibration "
+                    f"line={line_number}, X={target_x:.4f}, Y={target_y:.4f}, "
+                    f"Z={target_z:.4f}, amp={amplitude:.5f} dB, "
+                    f"phase={phase:.3f}"
+                ),
+            }
+        )
+        self._step_counter += 1
+        self._update_progress()
+        return True
+
     def _scan_z_fly(self, full_data, preview_data, step_y, step_x, freq_1, freq_2):
         z_targets = np.asarray(self.z_range, dtype=float)
         if z_targets.size == 0:
@@ -561,11 +683,13 @@ class MeasureThread(QThread):
             self.generator_amps_1 = _normalize_amps(self.generator_amps_1)
             self.generator_amps_2 = _normalize_amps(self.generator_amps_2)
 
+            base_steps_per_angle = (
+                len(self.y_range) * len(self.x_range) * len(self.z_range)
+            )
+            calibration_steps_per_angle = self._calibration_count_per_angle()
             self._total_steps = (
                 len(self.rotation_range)
-                * len(self.y_range)
-                * len(self.x_range)
-                * len(self.z_range)
+                * (base_steps_per_angle + calibration_steps_per_angle)
                 * freq_points
             )
             self._step_counter = 0
@@ -638,6 +762,14 @@ class MeasureThread(QThread):
                         "x": self.x_range.tolist(),
                         "y": self.y_range.tolist(),
                         "z": self.z_range.tolist(),
+                        "center_calibration": {
+                            "enabled": self._calibration_enabled(),
+                            "period_lines": self.center_calibration_period_lines,
+                            "target_x": self.center_calibration_x,
+                            "target_y": self.center_calibration_y,
+                            "target_z": self.center_calibration_z,
+                        },
+                        "calibration_points": [],
                         "amplitude": np.zeros(
                             (len(self.y_range), len(self.x_range), len(self.z_range))
                         ).tolist(),
@@ -683,6 +815,7 @@ class MeasureThread(QThread):
                         "vna_latency_ms": full_data["vna_latency_ms"],
                     }
                     angle_has_data = False
+                    angle_line_count = 0
 
                     for step_y, y in enumerate(self.y_range):
                         if not State.measure_running:
@@ -711,6 +844,7 @@ class MeasureThread(QThread):
                                 stop_requested = True
                                 break
 
+                            line_completed = False
                             if self.use_z_fly_mode and self.use_z_sweep:
                                 captured = self._scan_z_fly(
                                     full_data,
@@ -725,6 +859,7 @@ class MeasureThread(QThread):
                                 if not State.measure_running:
                                     stop_requested = True
                                     break
+                                line_completed = True
                             else:
                                 if use_z_snake:
                                     # Alternate Z direction for each X row in step mode.
@@ -768,6 +903,29 @@ class MeasureThread(QThread):
                                         break
                                 if stop_requested:
                                     break
+                                line_completed = True
+
+                            if line_completed:
+                                angle_line_count += 1
+                                if (
+                                    self._calibration_enabled()
+                                    and angle_line_count
+                                    % self.center_calibration_period_lines
+                                    == 0
+                                ):
+                                    if self._capture_center_calibration(
+                                        full_data,
+                                        angle_line_count,
+                                        step_y,
+                                        step_x,
+                                        freq_1,
+                                        freq_2,
+                                        rotation_angle,
+                                    ):
+                                        angle_has_data = True
+                                    if not State.measure_running:
+                                        stop_requested = True
+                                        break
                         if stop_requested:
                             break
 
@@ -945,6 +1103,39 @@ class MeasureWidget(QGroupBox):
         self.plot_update_hz.setToolTip("How often live amplitude/phase images update")
         self.plot_update_hz.valueChanged.connect(self.on_plot_update_hz_changed)
 
+        self.center_calibration_enabled = QCheckBox(self)
+        self.center_calibration_enabled.setChecked(State.center_calibration_enabled)
+        self.center_calibration_enabled.setToolTip(
+            "Return to the center point after a configured number of completed Z lines"
+        )
+        self.center_calibration_enabled.toggled.connect(self.update_approx_time)
+        self.center_calibration_enabled.toggled.connect(
+            self._set_center_calibration_controls_enabled
+        )
+        self.center_calibration_x = DoubleSpinBox(self)
+        self.center_calibration_x.setRange(-1000, 1000)
+        self.center_calibration_x.setDecimals(4)
+        self.center_calibration_x.setValue(State.center_calibration_x)
+        self.center_calibration_y = DoubleSpinBox(self)
+        self.center_calibration_y.setRange(-1000, 1000)
+        self.center_calibration_y.setDecimals(4)
+        self.center_calibration_y.setValue(State.center_calibration_y)
+        self.center_calibration_z = DoubleSpinBox(self)
+        self.center_calibration_z.setRange(-1000, 1000)
+        self.center_calibration_z.setDecimals(4)
+        self.center_calibration_z.setValue(State.center_calibration_z)
+        self.center_calibration_period_lines = QSpinBox(self)
+        self.center_calibration_period_lines.setRange(1, 1_000_000)
+        self.center_calibration_period_lines.setValue(
+            max(1, State.center_calibration_period_lines)
+        )
+        self.center_calibration_period_lines.setToolTip(
+            "Calibration period measured in fully completed Z scan lines"
+        )
+        self.center_calibration_period_lines.valueChanged.connect(
+            self.update_approx_time
+        )
+
         self.generator_freq_start_1 = DoubleSpinBox(self)
         self.generator_freq_start_1.setRange(1, 1000)
         self.generator_freq_start_1.setDecimals(5)
@@ -1062,6 +1253,14 @@ class MeasureWidget(QGroupBox):
         f_layout.addRow("VNA average", self.vna_average_enabled)
         f_layout.addRow("VNA average count", self.vna_average_count)
         f_layout.addRow("Plot update, Hz", self.plot_update_hz)
+        f_layout.addRow("Center calibration", self.center_calibration_enabled)
+        f_layout.addRow("Calibration X, mm", self.center_calibration_x)
+        f_layout.addRow("Calibration Y, mm", self.center_calibration_y)
+        f_layout.addRow("Calibration Z, mm", self.center_calibration_z)
+        f_layout.addRow(
+            "Calibration period, Z lines",
+            self.center_calibration_period_lines,
+        )
 
         f_layout.addRow(HLine(self))
 
@@ -1102,6 +1301,9 @@ class MeasureWidget(QGroupBox):
         self.update_z_step()
         self.update_rotation_step()
         self.on_z_fly_toggled(self.z_fly_check.isChecked())
+        self._set_center_calibration_controls_enabled(
+            self.center_calibration_enabled.isChecked()
+        )
         self.update_approx_time()
 
     def on_z_fly_toggled(self, enabled):
@@ -1112,6 +1314,15 @@ class MeasureWidget(QGroupBox):
             self.z_snake_check.setEnabled(False)
         else:
             self.z_snake_check.setEnabled(True)
+
+    def _set_center_calibration_controls_enabled(self, enabled):
+        for widget in (
+            self.center_calibration_x,
+            self.center_calibration_y,
+            self.center_calibration_z,
+            self.center_calibration_period_lines,
+        ):
+            widget.setEnabled(enabled)
 
     @staticmethod
     def on_plot_update_hz_changed(value):
@@ -1147,6 +1358,11 @@ class MeasureWidget(QGroupBox):
         if self.z_fly_check.isChecked() and self.z_fly_speed.value() <= 0:
             logger.warning("Z Fly speed must be > 0!")
             return
+        if self.center_calibration_enabled.isChecked() and (
+            not State.scanner.id_x or not State.scanner.id_y or not State.scanner.id_z
+        ):
+            logger.warning("Center calibration requires initialized X, Y and Z axes!")
+            return
 
         State.generator_freq_start_1 = self.generator_freq_start_1.value()
         State.generator_freq_stop_1 = self.generator_freq_stop_1.value()
@@ -1172,6 +1388,13 @@ class MeasureWidget(QGroupBox):
         State.measure_vna_average_enabled = self.vna_average_enabled.isChecked()
         State.measure_vna_average_count = self.vna_average_count.value()
         State.plot_update_hz = self.plot_update_hz.value()
+        State.center_calibration_enabled = self.center_calibration_enabled.isChecked()
+        State.center_calibration_x = self.center_calibration_x.value()
+        State.center_calibration_y = self.center_calibration_y.value()
+        State.center_calibration_z = self.center_calibration_z.value()
+        State.center_calibration_period_lines = (
+            self.center_calibration_period_lines.value()
+        )
 
         State.x_start = self.x_start.value()
         State.x_stop = self.x_stop.value()
@@ -1259,6 +1482,11 @@ class MeasureWidget(QGroupBox):
             z_movement_delay=State.z_movement_delay,
             no_movement_delay=State.no_movement_delay,
             fly_poll_delay_ms=max(1, int(min(50, State.no_movement_delay // 5 or 1))),
+            center_calibration_enabled=State.center_calibration_enabled,
+            center_calibration_x=State.center_calibration_x,
+            center_calibration_y=State.center_calibration_y,
+            center_calibration_z=State.center_calibration_z,
+            center_calibration_period_lines=State.center_calibration_period_lines,
         )
 
         update_plot = (
@@ -1379,11 +1607,18 @@ class MeasureWidget(QGroupBox):
         rotation_points = (
             self.rotation_points.value() if self.rotation_check.isChecked() else 1
         )
+        x_points = self.x_points.value() if self.x_check.isChecked() else 1
+        y_points = self.y_points.value() if self.y_check.isChecked() else 1
+        z_points = self.z_points.value() if self.z_check.isChecked() else 1
+        full_z_lines = x_points * y_points
+        calibration_points = 0
+        if self.center_calibration_enabled.isChecked():
+            calibration_points = (
+                full_z_lines // self.center_calibration_period_lines.value()
+            )
         steps = (
             rotation_points
-            * self.x_points.value()
-            * self.y_points.value()
-            * self.z_points.value()
+            * (full_z_lines * z_points + calibration_points)
             * np.min(
                 [
                     self.generator_freq_points_1.value(),

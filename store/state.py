@@ -82,6 +82,21 @@ class State:
         settings.value("Measure/vna_average_enabled", "false") == "true"
     )
     plot_update_hz: float = float(settings.value("Measure/plot_update_hz", 10.0))
+    center_calibration_enabled: bool = (
+        settings.value("Measure/center_calibration_enabled", "false") == "true"
+    )
+    center_calibration_x: float = float(
+        settings.value("Measure/center_calibration_x", 0.0)
+    )
+    center_calibration_y: float = float(
+        settings.value("Measure/center_calibration_y", 0.0)
+    )
+    center_calibration_z: float = float(
+        settings.value("Measure/center_calibration_z", 0.0)
+    )
+    center_calibration_period_lines: int = int(
+        settings.value("Measure/center_calibration_period_lines", 0)
+    )
 
     # Movement delays in milliseconds
     x_movement_delay: int = int(settings.value("Measure/x_movement_delay", 100))
@@ -166,6 +181,26 @@ class State:
             "Measure/vna_average_enabled", cls.measure_vna_average_enabled
         )
         cls.settings.setValue("Measure/plot_update_hz", cls.plot_update_hz)
+        cls.settings.setValue(
+            "Measure/center_calibration_enabled",
+            cls.center_calibration_enabled,
+        )
+        cls.settings.setValue(
+            "Measure/center_calibration_x",
+            cls.center_calibration_x,
+        )
+        cls.settings.setValue(
+            "Measure/center_calibration_y",
+            cls.center_calibration_y,
+        )
+        cls.settings.setValue(
+            "Measure/center_calibration_z",
+            cls.center_calibration_z,
+        )
+        cls.settings.setValue(
+            "Measure/center_calibration_period_lines",
+            cls.center_calibration_period_lines,
+        )
 
         cls.settings.setValue("Measure/x_movement_delay", cls.x_movement_delay)
         cls.settings.setValue("Measure/y_movement_delay", cls.y_movement_delay)
