@@ -653,6 +653,14 @@ class BasePlotWidget(QWidget):
         self.plot_item.addItem(self.roi)
         self.roi.setZValue(10)
 
+        self.vertical_roi = pg.ROI(
+            [0, 0], [2, 10], pen=pg.mkPen((0, 150, 255), width=2)
+        )
+        self.vertical_roi.addScaleHandle([1, 0.5], [0.5, 0.5])
+        self.vertical_roi.addScaleHandle([0.5, 1], [0.5, 0.5])
+        self.plot_item.addItem(self.vertical_roi)
+        self.vertical_roi.setZValue(10)
+
         self.roi_plot_item = pg.plot(title="ROI Data", colspan=2)
         self.roi_plot_item.setBackground("w")
         self.roi_plot_item.setMinimumHeight(150)
@@ -660,6 +668,7 @@ class BasePlotWidget(QWidget):
         self.roi_plot_item.setLabel("bottom", "Position", units="mm")
         self.roi_plot_item.setLabel("left", "Value")
         self.roi_plot_item.showGrid(x=True, y=True, alpha=0.3)
+        self.roi_plot_item.addLegend(offset=(10, 10))
 
         main_layout.addWidget(self.graphics_layout, stretch=1)
         main_layout.addWidget(self.roi_plot_item, stretch=1)
@@ -669,6 +678,7 @@ class BasePlotWidget(QWidget):
         self.data_key = data_key
         self.title = title
         self.roi_data_curve = None
+        self.vertical_roi_data_curve = None
         self.display_data = None
         self.x_axis = np.array([])
         self.z_axis = np.array([])
@@ -685,6 +695,7 @@ class BasePlotWidget(QWidget):
         self._pending_roi_update = False
 
         self.roi.sigRegionChanged.connect(self._schedule_roi_update)
+        self.vertical_roi.sigRegionChanged.connect(self._schedule_roi_update)
         self.plot_item.scene().sigMouseMoved.connect(self.mouse_moved)
         self.plot_item.scene().sigMouseClicked.connect(self.mouse_clicked)
 
@@ -963,23 +974,61 @@ class BasePlotWidget(QWidget):
                 return
 
             roi_x_min, roi_x_max, roi_z_min, roi_z_max = self._roi_bounds(self.roi)
-            x_indices = np.where((x_high >= roi_x_min) & (x_low <= roi_x_max))[0]
-            z_indices = np.where((z_high >= roi_z_min) & (z_low <= roi_z_max))[0]
-            if x_indices.size == 0 or z_indices.size == 0:
+            horizontal_x_indices = np.where(
+                (x_high >= roi_x_min) & (x_low <= roi_x_max)
+            )[0]
+            horizontal_z_indices = np.where(
+                (z_high >= roi_z_min) & (z_low <= roi_z_max)
+            )[0]
+            if horizontal_x_indices.size == 0 or horizontal_z_indices.size == 0:
                 if self.roi_data_curve is not None:
                     self.roi_data_curve.clear()
-                return
-
-            roi_data = data[np.ix_(x_indices, z_indices)]
-            mean_data = np.mean(roi_data, axis=1)
-            x_positions = self.x_axis[x_indices]
-
-            if self.roi_data_curve is None:
-                self.roi_data_curve = self.roi_plot_item.plot(
-                    x_positions, mean_data, pen=pg.mkPen("r", width=2), clear=True
-                )
             else:
-                self.roi_data_curve.setData(x_positions, mean_data)
+                roi_data = data[np.ix_(horizontal_x_indices, horizontal_z_indices)]
+                mean_data = np.mean(roi_data, axis=1)
+                x_positions = self.x_axis[horizontal_x_indices]
+
+                if self.roi_data_curve is None:
+                    self.roi_data_curve = self.roi_plot_item.plot(
+                        x_positions,
+                        mean_data,
+                        pen=pg.mkPen("r", width=2),
+                        name="Horizontal ROI",
+                    )
+                else:
+                    self.roi_data_curve.setData(x_positions, mean_data)
+
+            (
+                vertical_x_min,
+                vertical_x_max,
+                vertical_z_min,
+                vertical_z_max,
+            ) = self._roi_bounds(self.vertical_roi)
+            vertical_x_indices = np.where(
+                (x_high >= vertical_x_min) & (x_low <= vertical_x_max)
+            )[0]
+            vertical_z_indices = np.where(
+                (z_high >= vertical_z_min) & (z_low <= vertical_z_max)
+            )[0]
+            if vertical_x_indices.size == 0 or vertical_z_indices.size == 0:
+                if self.vertical_roi_data_curve is not None:
+                    self.vertical_roi_data_curve.clear()
+            else:
+                vertical_roi_data = data[np.ix_(vertical_x_indices, vertical_z_indices)]
+                vertical_mean_data = np.mean(vertical_roi_data, axis=0)
+                z_positions = self.z_axis[vertical_z_indices]
+
+                if self.vertical_roi_data_curve is None:
+                    self.vertical_roi_data_curve = self.roi_plot_item.plot(
+                        z_positions,
+                        vertical_mean_data,
+                        pen=pg.mkPen((0, 150, 255), width=2),
+                        name="Vertical ROI",
+                    )
+                else:
+                    self.vertical_roi_data_curve.setData(
+                        z_positions, vertical_mean_data
+                    )
 
             self.roi_plot_item.setTitle(f"{self.title} ROI Cross-Section")
             self.roi_plot_item.setLabel("left", self.title)
