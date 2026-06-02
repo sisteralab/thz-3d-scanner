@@ -360,6 +360,10 @@ class MeasureThread(QThread):
         full_data["phase"][step_y][step_x][z_idx] = phase
         full_data["complex_real"][step_y][step_x][z_idx] = mean_real
         full_data["complex_imag"][step_y][step_x][z_idx] = mean_imag
+        full_data["calibrated_amplitude"][step_y][step_x][z_idx] = dat
+        full_data["calibrated_phase"][step_y][step_x][z_idx] = phase
+        full_data["calibrated_complex_real"][step_y][step_x][z_idx] = mean_real
+        full_data["calibrated_complex_imag"][step_y][step_x][z_idx] = mean_imag
         full_data["z_request"][step_y][step_x][z_idx] = z_request
         full_data["z_response"][step_y][step_x][z_idx] = z_response
         full_data["vna_latency_ms"][step_y][step_x][z_idx] = float(
@@ -390,7 +394,7 @@ class MeasureThread(QThread):
         if not self._calibration_enabled():
             return 0
         full_z_lines = len(self.y_range) * len(self.x_range)
-        return full_z_lines // self.center_calibration_period_lines
+        return 1 + int(np.ceil(full_z_lines / self.center_calibration_period_lines))
 
     @staticmethod
     def _get_axis_position(axis_id):
@@ -447,34 +451,73 @@ class MeasureThread(QThread):
         mean_imag = float(np.mean(imag[:points_count], dtype=np.float64))
         amplitude = float(20 * np.log10(max(np.hypot(mean_real, mean_imag), 1e-12)))
         phase = float(np.arctan2(mean_imag, mean_real))
+        reference_real = full_data.get("center_calibration", {}).get(
+            "reference_complex_real"
+        )
+        reference_imag = full_data.get("center_calibration", {}).get(
+            "reference_complex_imag"
+        )
+        delta_real = None
+        delta_imag = None
+        drift_amplitude_ratio = None
+        drift_phase_rad = None
+        if reference_real is not None and reference_imag is not None:
+            reference_complex = complex(float(reference_real), float(reference_imag))
+            current_complex = complex(mean_real, mean_imag)
+            delta = current_complex - reference_complex
+            delta_real = float(delta.real)
+            delta_imag = float(delta.imag)
+            if abs(reference_complex) > 1e-12:
+                drift = current_complex / reference_complex
+                drift_amplitude_ratio = float(abs(drift))
+                drift_phase_rad = float(np.angle(drift))
 
         calibration_points = full_data.setdefault("calibration_points", [])
-        calibration_points.append(
-            {
-                "line_number": int(line_number),
-                "after_y_index": int(step_y),
-                "after_x_index": int(step_x),
-                "after_y": float(self.y_range[step_y]),
-                "after_x": float(self.x_range[step_x]),
-                "target_x": float(target_x),
-                "target_y": float(target_y),
-                "target_z": float(target_z),
-                "actual_x": self._get_axis_position(State.scanner.id_x),
-                "actual_y": self._get_axis_position(State.scanner.id_y),
-                "actual_z": self._get_axis_position(State.scanner.id_z),
-                "freq_1": float(freq_1),
-                "freq_2": float(freq_2),
-                "amp_1": full_data.get("amp_1"),
-                "amp_2": full_data.get("amp_2"),
-                "rotation_angle": float(rotation_angle),
-                "complex_real": mean_real,
-                "complex_imag": mean_imag,
-                "amplitude": amplitude,
-                "phase": phase,
-                "vna_latency_ms": float(meas_duration * 1000.0),
-                "elapsed_s": float(time.time() - self._start_time),
-            }
-        )
+        calibration_point = {
+            "line_number": int(line_number),
+            "after_y_index": None if step_y is None else int(step_y),
+            "after_x_index": None if step_x is None else int(step_x),
+            "after_y": None if step_y is None else float(self.y_range[step_y]),
+            "after_x": None if step_x is None else float(self.x_range[step_x]),
+            "target_x": float(target_x),
+            "target_y": float(target_y),
+            "target_z": float(target_z),
+            "actual_x": self._get_axis_position(State.scanner.id_x),
+            "actual_y": self._get_axis_position(State.scanner.id_y),
+            "actual_z": self._get_axis_position(State.scanner.id_z),
+            "freq_1": float(freq_1),
+            "freq_2": float(freq_2),
+            "amp_1": full_data.get("amp_1"),
+            "amp_2": full_data.get("amp_2"),
+            "rotation_angle": float(rotation_angle),
+            "complex_real": mean_real,
+            "complex_imag": mean_imag,
+            "amplitude": amplitude,
+            "phase": phase,
+            "delta_from_reference_real": delta_real,
+            "delta_from_reference_imag": delta_imag,
+            "drift_amplitude_ratio": drift_amplitude_ratio,
+            "drift_phase_rad": drift_phase_rad,
+            "vna_latency_ms": float(meas_duration * 1000.0),
+            "elapsed_s": float(time.time() - self._start_time),
+        }
+        calibration_points.append(calibration_point)
+        if line_number == 0:
+            full_data["center_calibration"]["reference_complex_real"] = mean_real
+            full_data["center_calibration"]["reference_complex_imag"] = mean_imag
+            full_data["center_calibration"]["reference_amplitude"] = amplitude
+            full_data["center_calibration"]["reference_phase"] = phase
+        elif step_y is not None and step_x is not None:
+            if State.scanner.id_y:
+                State.scanner.move_y(float(self.y_range[step_y]))
+                if not State.measure_running:
+                    return None
+                self.msleep(self.y_movement_delay)
+            if State.scanner.id_x:
+                State.scanner.move_x(float(self.x_range[step_x]))
+                if not State.measure_running:
+                    return None
+                self.msleep(self.x_movement_delay)
         self.log.emit(
             {
                 "type": "info",
@@ -488,7 +531,81 @@ class MeasureThread(QThread):
         )
         self._step_counter += 1
         self._update_progress()
-        return True
+        return calibration_point
+
+    def _line_to_indices(self, line_number):
+        line_index = int(line_number) - 1
+        x_count = len(self.x_range)
+        return line_index // x_count, line_index % x_count
+
+    @staticmethod
+    def _calibration_complex(calibration_point):
+        return complex(
+            float(calibration_point["complex_real"]),
+            float(calibration_point["complex_imag"]),
+        )
+
+    def _apply_center_calibration_interval(
+        self,
+        full_data,
+        previous_calibration,
+        current_calibration,
+    ):
+        if previous_calibration is None or current_calibration is None:
+            return
+
+        start_line = int(previous_calibration["line_number"]) + 1
+        end_line = int(current_calibration["line_number"])
+        if end_line < start_line:
+            return
+
+        reference_real = full_data.get("center_calibration", {}).get(
+            "reference_complex_real"
+        )
+        reference_imag = full_data.get("center_calibration", {}).get(
+            "reference_complex_imag"
+        )
+        if reference_real is None or reference_imag is None:
+            return
+
+        reference_complex = complex(float(reference_real), float(reference_imag))
+        previous_complex = self._calibration_complex(previous_calibration)
+        current_complex = self._calibration_complex(current_calibration)
+        span = max(1, end_line - int(previous_calibration["line_number"]))
+
+        for line_number in range(start_line, end_line + 1):
+            step_y, step_x = self._line_to_indices(line_number)
+            ratio = (line_number - int(previous_calibration["line_number"])) / span
+            line_calibration = (
+                previous_complex + (current_complex - previous_complex) * ratio
+            )
+            if abs(line_calibration) <= 1e-12:
+                factor = 1.0 + 0.0j
+            else:
+                factor = reference_complex / line_calibration
+
+            raw_real = np.asarray(
+                full_data["complex_real"][step_y][step_x],
+                dtype=np.float64,
+            )
+            raw_imag = np.asarray(
+                full_data["complex_imag"][step_y][step_x],
+                dtype=np.float64,
+            )
+            corrected = (raw_real + 1j * raw_imag) * factor
+            corrected_amplitude = 20 * np.log10(np.clip(np.abs(corrected), 1e-12, None))
+            corrected_phase = np.angle(corrected)
+
+            full_data["calibrated_complex_real"][step_y][step_x] = np.real(
+                corrected
+            ).tolist()
+            full_data["calibrated_complex_imag"][step_y][step_x] = np.imag(
+                corrected
+            ).tolist()
+            full_data["calibrated_amplitude"][step_y][
+                step_x
+            ] = corrected_amplitude.tolist()
+            full_data["calibrated_phase"][step_y][step_x] = corrected_phase.tolist()
 
     def _scan_z_fly(self, full_data, preview_data, step_y, step_x, freq_1, freq_2):
         z_targets = np.asarray(self.z_range, dtype=float)
@@ -768,6 +885,10 @@ class MeasureThread(QThread):
                             "target_x": self.center_calibration_x,
                             "target_y": self.center_calibration_y,
                             "target_z": self.center_calibration_z,
+                            "reference_complex_real": None,
+                            "reference_complex_imag": None,
+                            "reference_amplitude": None,
+                            "reference_phase": None,
                         },
                         "calibration_points": [],
                         "amplitude": np.zeros(
@@ -780,6 +901,18 @@ class MeasureThread(QThread):
                             (len(self.y_range), len(self.x_range), len(self.z_range))
                         ).tolist(),
                         "complex_imag": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "calibrated_amplitude": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "calibrated_phase": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "calibrated_complex_real": np.zeros(
+                            (len(self.y_range), len(self.x_range), len(self.z_range))
+                        ).tolist(),
+                        "calibrated_complex_imag": np.zeros(
                             (len(self.y_range), len(self.x_range), len(self.z_range))
                         ).tolist(),
                         "z_request": np.zeros(
@@ -809,6 +942,10 @@ class MeasureThread(QThread):
                         "phase": full_data["phase"],
                         "complex_real": full_data["complex_real"],
                         "complex_imag": full_data["complex_imag"],
+                        "calibrated_amplitude": full_data["calibrated_amplitude"],
+                        "calibrated_phase": full_data["calibrated_phase"],
+                        "calibrated_complex_real": full_data["calibrated_complex_real"],
+                        "calibrated_complex_imag": full_data["calibrated_complex_imag"],
                         "z_request": full_data["z_request"],
                         "z_response": full_data["z_response"],
                         "late_sample": full_data["late_sample"],
@@ -816,6 +953,25 @@ class MeasureThread(QThread):
                     }
                     angle_has_data = False
                     angle_line_count = 0
+                    last_completed_step_y = None
+                    last_completed_step_x = None
+                    previous_calibration = None
+                    if self._calibration_enabled():
+                        previous_calibration = self._capture_center_calibration(
+                            full_data,
+                            0,
+                            None,
+                            None,
+                            freq_1,
+                            freq_2,
+                            rotation_angle,
+                        )
+                        if previous_calibration is None:
+                            stop_requested = True
+                        else:
+                            angle_has_data = True
+                    if stop_requested:
+                        break
 
                     for step_y, y in enumerate(self.y_range):
                         if not State.measure_running:
@@ -907,27 +1063,69 @@ class MeasureThread(QThread):
 
                             if line_completed:
                                 angle_line_count += 1
+                                last_completed_step_y = step_y
+                                last_completed_step_x = step_x
                                 if (
                                     self._calibration_enabled()
                                     and angle_line_count
                                     % self.center_calibration_period_lines
                                     == 0
                                 ):
-                                    if self._capture_center_calibration(
-                                        full_data,
-                                        angle_line_count,
-                                        step_y,
-                                        step_x,
-                                        freq_1,
-                                        freq_2,
-                                        rotation_angle,
-                                    ):
+                                    current_calibration = (
+                                        self._capture_center_calibration(
+                                            full_data,
+                                            angle_line_count,
+                                            step_y,
+                                            step_x,
+                                            freq_1,
+                                            freq_2,
+                                            rotation_angle,
+                                        )
+                                    )
+                                    if current_calibration is not None:
+                                        self._apply_center_calibration_interval(
+                                            full_data,
+                                            previous_calibration,
+                                            current_calibration,
+                                        )
+                                        previous_calibration = current_calibration
+                                        self._emit_preview_data(
+                                            preview_data,
+                                            force=True,
+                                        )
                                         angle_has_data = True
                                     if not State.measure_running:
                                         stop_requested = True
                                         break
                         if stop_requested:
                             break
+
+                    if (
+                        self._calibration_enabled()
+                        and not stop_requested
+                        and previous_calibration is not None
+                        and last_completed_step_y is not None
+                        and int(previous_calibration["line_number"]) < angle_line_count
+                    ):
+                        current_calibration = self._capture_center_calibration(
+                            full_data,
+                            angle_line_count,
+                            last_completed_step_y,
+                            last_completed_step_x,
+                            freq_1,
+                            freq_2,
+                            rotation_angle,
+                        )
+                        if current_calibration is not None:
+                            self._apply_center_calibration_interval(
+                                full_data,
+                                previous_calibration,
+                                current_calibration,
+                            )
+                            self._emit_preview_data(preview_data, force=True)
+                            angle_has_data = True
+                        if not State.measure_running:
+                            stop_requested = True
 
                     if angle_has_data:
                         self._emit_preview_data(preview_data, force=True)
@@ -1613,8 +1811,8 @@ class MeasureWidget(QGroupBox):
         full_z_lines = x_points * y_points
         calibration_points = 0
         if self.center_calibration_enabled.isChecked():
-            calibration_points = (
-                full_z_lines // self.center_calibration_period_lines.value()
+            calibration_points = 1 + int(
+                np.ceil(full_z_lines / self.center_calibration_period_lines.value())
             )
         steps = (
             rotation_points

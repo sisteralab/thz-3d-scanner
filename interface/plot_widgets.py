@@ -1298,8 +1298,14 @@ class DataVisualizationWindow(QWidget):
         self.show_late_samples_checkbox.setToolTip(
             "Show points measured after the scanner already passed their target."
         )
+        self.show_calibrated_checkbox = QCheckBox("Show calibrated data")
+        self.show_calibrated_checkbox.setChecked(False)
+        self.show_calibrated_checkbox.setToolTip(
+            "Display center-calibration corrected amplitude and phase when available."
+        )
         controls_layout.addWidget(self.drop_raw_checkbox)
         controls_layout.addWidget(self.show_late_samples_checkbox)
+        controls_layout.addWidget(self.show_calibrated_checkbox)
         controls_layout.addStretch(1)
         main_layout.addLayout(controls_layout)
 
@@ -1337,6 +1343,7 @@ class DataVisualizationWindow(QWidget):
         self.show_late_samples_checkbox.toggled.connect(
             self._set_late_sample_markers_visible
         )
+        self.show_calibrated_checkbox.toggled.connect(self._on_show_calibrated_toggled)
         self.update_data(data)
 
     def _apply_corrected_data(self, data):
@@ -1355,6 +1362,24 @@ class DataVisualizationWindow(QWidget):
         ):
             return {key: value for key, value in data.items() if key != "vna_data"}
         return data
+
+    def _prepare_plot_data(self, data):
+        data = self._prepare_view_data(data)
+        if not self.show_calibrated_checkbox.isChecked() or not isinstance(data, dict):
+            return data
+
+        calibrated_keys = {
+            "amplitude": "calibrated_amplitude",
+            "phase": "calibrated_phase",
+            "complex_real": "calibrated_complex_real",
+            "complex_imag": "calibrated_complex_imag",
+        }
+        prepared = dict(data)
+        for target_key, source_key in calibrated_keys.items():
+            if source_key in data:
+                prepared[target_key] = data[source_key]
+        prepared["display_calibrated"] = True
+        return prepared
 
     @staticmethod
     def _extract_rotation_axis(data):
@@ -1405,6 +1430,9 @@ class DataVisualizationWindow(QWidget):
             return
         self._push_current_slice()
 
+    def _on_show_calibrated_toggled(self, _checked):
+        self._push_current_slice()
+
     def _on_plot_plane_changed(self, plane):
         self._current_plot_plane = plane
         current_data = self._current_rotation_data()
@@ -1428,7 +1456,7 @@ class DataVisualizationWindow(QWidget):
         if self._source_data is None:
             return
         current_data = self._current_rotation_data()
-        view_data = self._prepare_view_data(current_data)
+        view_data = self._prepare_plot_data(current_data)
         axis_name = plot_slice_axis_name(self._current_plot_plane)
         slice_index = self._current_slice_indices.get(axis_name, 0)
         slice_data = extract_axis_slice(

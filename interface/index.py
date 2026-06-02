@@ -69,6 +69,11 @@ class MainWindow(QMainWindow):
         self.show_late_samples_checkbox.setToolTip(
             "Show points measured after the scanner already passed their target."
         )
+        self.show_calibrated_checkbox = QCheckBox("Show calibrated data", self)
+        self.show_calibrated_checkbox.setChecked(False)
+        self.show_calibrated_checkbox.setToolTip(
+            "Display center-calibration corrected amplitude and phase when available."
+        )
         self.reference_controller.corrected_data_ready.connect(
             self._apply_corrected_data
         )
@@ -80,6 +85,7 @@ class MainWindow(QMainWindow):
         self.show_late_samples_checkbox.toggled.connect(
             self._set_late_sample_markers_visible
         )
+        self.show_calibrated_checkbox.toggled.connect(self._on_show_calibrated_toggled)
 
         self.log_widget = LogWidget(self)
         self.memory_monitor = MemoryMonitor(self)
@@ -93,6 +99,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.plot_plane_widget)
         left_layout.addWidget(self.y_slice_widget)
         left_layout.addWidget(self.show_late_samples_checkbox)
+        left_layout.addWidget(self.show_calibrated_checkbox)
         left_layout.addWidget(self.reference_widget)
         left_layout.addLayout(plots_layout)
         left_layout.addWidget(self.log_widget)
@@ -210,11 +217,31 @@ class MainWindow(QMainWindow):
         slice_index = self._current_slice_indices.get(axis_name, 0)
         self.reference_controller.set_raw_data(
             extract_axis_slice(
-                self._current_rotation_data(),
+                self._prepare_plot_data(self._current_rotation_data()),
                 self._current_plot_plane,
                 slice_index,
             )
         )
+
+    def _prepare_plot_data(self, data):
+        if not self.show_calibrated_checkbox.isChecked() or not isinstance(data, dict):
+            return data
+
+        calibrated_keys = {
+            "amplitude": "calibrated_amplitude",
+            "phase": "calibrated_phase",
+            "complex_real": "calibrated_complex_real",
+            "complex_imag": "calibrated_complex_imag",
+        }
+        prepared = dict(data)
+        for target_key, source_key in calibrated_keys.items():
+            if source_key in data:
+                prepared[target_key] = data[source_key]
+        prepared["display_calibrated"] = True
+        return prepared
+
+    def _on_show_calibrated_toggled(self, _checked):
+        self._push_current_slice()
 
     def _apply_corrected_data(self, data):
         """Apply corrected data after complex reference subtraction."""
