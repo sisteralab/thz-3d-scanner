@@ -4,6 +4,7 @@ from PySide6 import QtGui
 from PySide6.QtCore import QObject, QLoggingCategory, Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
@@ -14,6 +15,59 @@ from PySide6.QtWidgets import (
 )
 
 from store.state import State
+
+
+PLOT_PLANE_ZX = "ZX"
+PLOT_PLANE_XZ = "XZ"
+PLOT_PLANE_YX = "YX"
+PLOT_PLANE_XY = "XY"
+PLOT_PLANE_ZY = "ZY"
+PLOT_PLANE_YZ = "YZ"
+PLOT_PLANE_OPTIONS = (
+    (PLOT_PLANE_ZX, "Z(X)"),
+    (PLOT_PLANE_XZ, "X(Z)"),
+    (PLOT_PLANE_YX, "Y(X)"),
+    (PLOT_PLANE_XY, "X(Y)"),
+    (PLOT_PLANE_ZY, "Z(Y)"),
+    (PLOT_PLANE_YZ, "Y(Z)"),
+)
+PLOT_PLANE_AXIS_MAP = {
+    PLOT_PLANE_ZX: ("X", "Z"),
+    PLOT_PLANE_XZ: ("Z", "X"),
+    PLOT_PLANE_YX: ("X", "Y"),
+    PLOT_PLANE_XY: ("Y", "X"),
+    PLOT_PLANE_ZY: ("Y", "Z"),
+    PLOT_PLANE_YZ: ("Z", "Y"),
+}
+SOURCE_AXIS_ORDER = ("Y", "X", "Z")
+SOURCE_AXIS_INDEX = {"Y": 0, "X": 1, "Z": 2}
+SOURCE_AXIS_KEY = {"Y": "y", "X": "x", "Z": "z"}
+
+
+def plot_plane_axes(plane):
+    return PLOT_PLANE_AXIS_MAP.get(plane, PLOT_PLANE_AXIS_MAP[PLOT_PLANE_ZX])
+
+
+def plot_slice_axis_name(plane):
+    horizontal_axis, vertical_axis = plot_plane_axes(plane)
+    for axis_name in ("X", "Y", "Z"):
+        if axis_name not in (horizontal_axis, vertical_axis):
+            return axis_name
+    return "Y"
+
+
+def extract_plot_axis_values(data, axis_name):
+    if not isinstance(data, dict):
+        return np.array([0.0], dtype=float)
+
+    amplitude = np.asarray(data.get("amplitude", []))
+    if amplitude.ndim != 3:
+        return np.array([0.0], dtype=float)
+
+    axis_name = str(axis_name).upper()
+    expected_size = amplitude.shape[SOURCE_AXIS_INDEX.get(axis_name, 0)]
+    axis_key = SOURCE_AXIS_KEY.get(axis_name, "y")
+    return _axis_values(data, axis_key, expected_size)
 
 
 def normalize_phase(phase_data):
@@ -35,8 +89,15 @@ def complex_to_amplitude_phase(complex_data):
     return amplitude_db, phase
 
 
-def extract_xz_slice(data, y_index):
-    """Return 2D x-z slice from either 2D or 3D data payload."""
+def _axis_values(data, axis_name, expected_size):
+    values = np.asarray(data.get(axis_name, np.arange(expected_size)), dtype=float)
+    if values.size != expected_size:
+        values = np.arange(expected_size, dtype=float)
+    return values
+
+
+def extract_axis_slice(data, plane=PLOT_PLANE_ZX, slice_index=0):
+    """Return a 2D slice with shape [horizontal_axis, vertical_axis]."""
     if not isinstance(data, dict):
         return {}
 
@@ -44,12 +105,43 @@ def extract_xz_slice(data, y_index):
     if amplitude.ndim != 3:
         return data
 
-    y_len = amplitude.shape[0]
-    if y_len == 0:
+    axis_sizes = {
+        "Y": amplitude.shape[0],
+        "X": amplitude.shape[1],
+        "Z": amplitude.shape[2],
+    }
+    if any(size == 0 for size in axis_sizes.values()):
         return data
-    y_idx = int(np.clip(y_index, 0, y_len - 1))
 
     sliced = dict(data)
+    axis_values = {
+        axis_name: _axis_values(
+            data,
+            SOURCE_AXIS_KEY[axis_name],
+            axis_sizes[axis_name],
+        )
+        for axis_name in SOURCE_AXIS_ORDER
+    }
+    horizontal_axis_name, vertical_axis_name = plot_plane_axes(plane)
+    slice_axis = plot_slice_axis_name(plane)
+    slice_values = axis_values[slice_axis]
+    slice_idx = int(np.clip(slice_index, 0, slice_values.size - 1))
+    horizontal_values = axis_values[horizontal_axis_name]
+    vertical_values = axis_values[vertical_axis_name]
+    remaining_axis_order = [
+        axis_name for axis_name in SOURCE_AXIS_ORDER if axis_name != slice_axis
+    ]
+
+    def slice_array(arr):
+        cut = np.take(arr, slice_idx, axis=SOURCE_AXIS_INDEX[slice_axis])
+        transpose_axes = (
+            remaining_axis_order.index(horizontal_axis_name),
+            remaining_axis_order.index(vertical_axis_name),
+        )
+        if transpose_axes == (0, 1):
+            return cut
+        return np.transpose(cut, transpose_axes)
+
     for key in (
         "amplitude",
         "phase",
@@ -61,16 +153,23 @@ def extract_xz_slice(data, y_index):
         "late_sample",
     ):
         arr = np.asarray(data.get(key, []))
-        if arr.ndim == 3 and arr.shape[0] == y_len:
-            sliced[key] = arr[y_idx]
+        if arr.ndim == 3 and arr.shape == amplitude.shape:
+            sliced[key] = slice_array(arr)
 
-    y_axis = np.asarray(data.get("y", np.arange(y_len)), dtype=float)
-    if y_axis.size != y_len:
-        y_axis = np.arange(y_len, dtype=float)
-
-    sliced["y_index"] = y_idx
-    sliced["y_value"] = float(y_axis[y_idx])
+    sliced["x"] = horizontal_values
+    sliced["z"] = vertical_values
+    sliced["plot_plane"] = plane
+    sliced["horizontal_axis_name"] = horizontal_axis_name
+    sliced["vertical_axis_name"] = vertical_axis_name
+    sliced["slice_axis_name"] = slice_axis
+    sliced["slice_index"] = slice_idx
+    sliced["slice_value"] = float(slice_values[slice_idx])
     return sliced
+
+
+def extract_xz_slice(data, y_index):
+    """Return 2D x-z slice from either 2D or 3D data payload."""
+    return extract_axis_slice(data, PLOT_PLANE_ZX, y_index)
 
 
 class ComplexReferenceController(QObject):
@@ -159,7 +258,8 @@ class ComplexReferenceController(QObject):
         # Keep full metadata for UI, but never pass heavy raw traces through live update signal.
         return {key: value for key, value in data.items() if key != "vna_data"}
 
-    def _build_empty_info(self):
+    def _build_empty_info(self, data=None):
+        data = data if isinstance(data, dict) else {}
         return {
             "points_preview": [],
             "points_ui": [],
@@ -173,6 +273,8 @@ class ComplexReferenceController(QObject):
             "reference_amplitude_db": None,
             "reference_phase_rad": None,
             "points_ui_truncated": False,
+            "horizontal_axis_name": str(data.get("horizontal_axis_name", "X")),
+            "vertical_axis_name": str(data.get("vertical_axis_name", "Z")),
         }
 
     @staticmethod
@@ -193,7 +295,7 @@ class ComplexReferenceController(QObject):
 
     def _build_corrected_data(self, data):
         if self.selected_points_array.size == 0:
-            return self._strip_heavy_fields(data), self._build_empty_info()
+            return self._strip_heavy_fields(data), self._build_empty_info(data)
 
         real_map = np.asarray(data.get("complex_real", []), dtype=np.float32)
         imag_map = np.asarray(data.get("complex_imag", []), dtype=np.float32)
@@ -202,7 +304,7 @@ class ComplexReferenceController(QObject):
             amplitude = np.asarray(data.get("amplitude", []), dtype=np.float32)
             phase = np.asarray(data.get("phase", []), dtype=np.float32)
             if amplitude.ndim != 2 or phase.shape != amplitude.shape:
-                return self._strip_heavy_fields(data), self._build_empty_info()
+                return self._strip_heavy_fields(data), self._build_empty_info(data)
 
             # Backward-compatible fallback for old datasets without complex maps.
             amp_linear = np.exp(amplitude * np.float32(np.log(10.0) / 20.0))
@@ -225,7 +327,7 @@ class ComplexReferenceController(QObject):
         )
         valid_points = self.selected_points_array[valid_mask]
         if valid_points.size == 0:
-            return self._strip_heavy_fields(data), self._build_empty_info()
+            return self._strip_heavy_fields(data), self._build_empty_info(data)
 
         selected_real = real_map[valid_points[:, 0], valid_points[:, 1]]
         selected_imag = imag_map[valid_points[:, 0], valid_points[:, 1]]
@@ -310,6 +412,8 @@ class ComplexReferenceController(QObject):
                 )
             ),
             "reference_phase_rad": float(np.arctan2(reference_imag, reference_real)),
+            "horizontal_axis_name": str(data.get("horizontal_axis_name", "X")),
+            "vertical_axis_name": str(data.get("vertical_axis_name", "Z")),
         }
 
         return corrected_data, info
@@ -366,6 +470,12 @@ class ComplexReferenceWidget(QWidget):
         self.controller.selection_changed.connect(self.update_from_selection)
 
     def update_from_selection(self, info):
+        horizontal_axis_name = str(info.get("horizontal_axis_name", "X"))
+        vertical_axis_name = str(info.get("vertical_axis_name", "Z"))
+        self.hint_label.setText(
+            f"Click Amplitude map ({horizontal_axis_name} horizontal, "
+            f"{vertical_axis_name} vertical)"
+        )
         count = int(info.get("count", 0))
         if count:
             self.summary_label.setText(
@@ -404,12 +514,60 @@ class ComplexReferenceWidget(QWidget):
         tooltip_lines = []
         for idx, point in enumerate(ui_points, start=1):
             tooltip_lines.append(
-                f"{idx}) X={point['x']:.3f}, Z={point['z']:.3f}, "
+                f"{idx}) {horizontal_axis_name}={point['x']:.3f}, "
+                f"{vertical_axis_name}={point['z']:.3f}, "
                 f"C={point['real']:.4e}{point['imag']:+.4e}j"
             )
         if info.get("points_ui_truncated", False):
             tooltip_lines.append("... truncated ...")
         self.points_label.setToolTip("\n".join(tooltip_lines))
+
+
+class PlotPlaneSelectorWidget(QWidget):
+    """Plot plane selector."""
+
+    plane_changed = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.title_label = QLabel("Plot axes:")
+        self.combo = QComboBox()
+        for plane, label in PLOT_PLANE_OPTIONS:
+            self.combo.addItem(label, plane)
+        self.combo.setMinimumWidth(110)
+
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.combo)
+        layout.addStretch(1)
+        self.setLayout(layout)
+
+        self.combo.currentIndexChanged.connect(self._on_index_changed)
+
+    def current_plane(self):
+        return self.combo.currentData()
+
+    def set_plane(self, plane, emit_signal=True):
+        index = self.combo.findData(plane)
+        if index < 0:
+            index = 0
+        if index == self.combo.currentIndex():
+            if emit_signal:
+                self.plane_changed.emit(self.current_plane())
+            return
+
+        previous_block = self.combo.blockSignals(True)
+        self.combo.setCurrentIndex(index)
+        self.combo.blockSignals(previous_block)
+        if emit_signal:
+            self.plane_changed.emit(self.current_plane())
+
+    def _on_index_changed(self, _index):
+        self.plane_changed.emit(self.current_plane())
 
 
 class YSliceSelectorWidget(QWidget):
@@ -450,6 +608,9 @@ class YSliceSelectorWidget(QWidget):
         self.value_spin.valueChanged.connect(self._on_spin_changed)
         self.slider.valueChanged.connect(self._on_slider_changed)
         self.setVisible(False)
+
+    def set_axis_name(self, axis_name):
+        self.title_label.setText(f"{axis_name} slice:")
 
     def set_y_values(self, y_values):
         values = np.asarray(y_values, dtype=float)
@@ -677,6 +838,8 @@ class BasePlotWidget(QWidget):
         self.current_data = None
         self.data_key = data_key
         self.title = title
+        self.horizontal_axis_name = "X"
+        self.vertical_axis_name = "Z"
         self.roi_data_curve = None
         self.vertical_roi_data_curve = None
         self.display_data = None
@@ -776,7 +939,10 @@ class BasePlotWidget(QWidget):
         return None
 
     def _reset_title(self):
-        self.plot_item.setTitle(f"{self.title} Color Map (X-Z Plane)")
+        self.plot_item.setTitle(
+            f"{self.title} Color Map ({self.horizontal_axis_name}-"
+            f"{self.vertical_axis_name} Plane)"
+        )
 
     def mouse_moved(self, scene_pos):
         if not self.plot_item.sceneBoundingRect().contains(scene_pos):
@@ -798,7 +964,9 @@ class BasePlotWidget(QWidget):
         if late_mask.shape == self.display_data.shape and late_mask[x_idx, z_idx]:
             late_text = " | late sample"
         self.plot_item.setTitle(
-            f"{self.title}: {value:.3f}, X: {x_coord:.3f} mm, Z: {z_coord:.3f} mm"
+            f"{self.title}: {value:.3f}, "
+            f"{self.horizontal_axis_name}: {x_coord:.3f} mm, "
+            f"{self.vertical_axis_name}: {z_coord:.3f} mm"
             f"{late_text}"
         )
 
@@ -873,6 +1041,17 @@ class BasePlotWidget(QWidget):
             data = normalize_phase(data)
 
         self.display_data = data
+        self.horizontal_axis_name = str(
+            self.current_data.get("horizontal_axis_name", "X")
+        )
+        self.vertical_axis_name = str(self.current_data.get("vertical_axis_name", "Z"))
+        self.plot_item.setLabel(
+            "bottom", f"{self.horizontal_axis_name} Position", units="mm"
+        )
+        self.plot_item.setLabel(
+            "left", f"{self.vertical_axis_name} Position", units="mm"
+        )
+        self._reset_title()
 
         x_data = np.asarray(self.current_data.get("x", np.arange(data.shape[0])))
         z_data = np.asarray(self.current_data.get("z", np.arange(data.shape[1])))
@@ -1100,6 +1279,8 @@ class DataVisualizationWindow(QWidget):
         )
         self._source_data = None
         self._current_y_index = 0
+        self._current_plot_plane = PLOT_PLANE_ZX
+        self._current_slice_indices = {"X": 0, "Y": 0, "Z": 0}
         self._current_rotation_index = 0
 
         main_layout = QVBoxLayout()
@@ -1127,6 +1308,10 @@ class DataVisualizationWindow(QWidget):
             self._on_rotation_slice_changed
         )
         main_layout.addWidget(self.rotation_slice_widget)
+
+        self.plot_plane_widget = PlotPlaneSelectorWidget()
+        self.plot_plane_widget.plane_changed.connect(self._on_plot_plane_changed)
+        main_layout.addWidget(self.plot_plane_widget)
 
         self.y_slice_widget = YSliceSelectorWidget()
         self.y_slice_widget.y_index_changed.connect(self._on_y_slice_changed)
@@ -1172,17 +1357,6 @@ class DataVisualizationWindow(QWidget):
         return data
 
     @staticmethod
-    def _extract_y_axis(data):
-        amplitude = np.asarray(data.get("amplitude", []))
-        if amplitude.ndim != 3:
-            return np.array([0.0], dtype=float)
-        y_len = amplitude.shape[0]
-        y_axis = np.asarray(data.get("y", np.arange(y_len)), dtype=float)
-        if y_axis.size != y_len:
-            y_axis = np.arange(y_len, dtype=float)
-        return y_axis
-
-    @staticmethod
     def _extract_rotation_axis(data):
         if isinstance(data, list):
             values = []
@@ -1209,22 +1383,45 @@ class DataVisualizationWindow(QWidget):
             return self._source_data[idx]
         return self._source_data
 
+    def _update_slice_selector(self, data):
+        axis_name = plot_slice_axis_name(self._current_plot_plane)
+        axis_values = extract_plot_axis_values(data, axis_name)
+        self.y_slice_widget.set_axis_name(axis_name)
+        self.y_slice_widget.set_y_values(axis_values)
+        current_index = int(
+            np.clip(
+                self._current_slice_indices.get(axis_name, 0),
+                0,
+                axis_values.size - 1,
+            )
+        )
+        self._current_slice_indices[axis_name] = current_index
+        if axis_name == "Y":
+            self._current_y_index = current_index
+        self.y_slice_widget.set_index(current_index, emit_signal=False)
+
     def _on_drop_raw_toggled(self, _checked):
         if self._source_data is None:
             return
         self._push_current_slice()
 
+    def _on_plot_plane_changed(self, plane):
+        self._current_plot_plane = plane
+        current_data = self._current_rotation_data()
+        self._update_slice_selector(current_data)
+        self._push_current_slice()
+
     def _on_rotation_slice_changed(self, rotation_index):
         self._current_rotation_index = int(rotation_index)
         current_data = self._current_rotation_data()
-        y_axis = self._extract_y_axis(current_data)
-        self.y_slice_widget.set_y_values(y_axis)
-        self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
-        self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)
+        self._update_slice_selector(current_data)
         self._push_current_slice()
 
     def _on_y_slice_changed(self, y_index):
-        self._current_y_index = int(y_index)
+        axis_name = plot_slice_axis_name(self._current_plot_plane)
+        self._current_slice_indices[axis_name] = int(y_index)
+        if axis_name == "Y":
+            self._current_y_index = int(y_index)
         self._push_current_slice()
 
     def _push_current_slice(self):
@@ -1232,7 +1429,13 @@ class DataVisualizationWindow(QWidget):
             return
         current_data = self._current_rotation_data()
         view_data = self._prepare_view_data(current_data)
-        slice_data = extract_xz_slice(view_data, self._current_y_index)
+        axis_name = plot_slice_axis_name(self._current_plot_plane)
+        slice_index = self._current_slice_indices.get(axis_name, 0)
+        slice_data = extract_axis_slice(
+            view_data,
+            self._current_plot_plane,
+            slice_index,
+        )
         self.reference_controller.set_raw_data(slice_data)
 
     def update_data(self, data):
@@ -1248,10 +1451,7 @@ class DataVisualizationWindow(QWidget):
         )
 
         current_data = self._current_rotation_data()
-        y_axis = self._extract_y_axis(current_data)
-        self.y_slice_widget.set_y_values(y_axis)
-        self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
-        self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)
+        self._update_slice_selector(current_data)
         self._push_current_slice()
 
 

@@ -1,7 +1,6 @@
 import logging
 
 import numpy as np
-import pyqtgraph as pg
 from PySide6 import QtGui
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -19,10 +18,15 @@ from interface.plot_widgets import (
     AmplitudePlotWidget,
     ComplexReferenceController,
     ComplexReferenceWidget,
+    PLOT_PLANE_ZX,
     PhasePlotWidget,
+    PlotPlaneSelectorWidget,
     RotationSliceSelectorWidget,
     YSliceSelectorWidget,
-    extract_xz_slice,
+    build_demo_data,
+    extract_axis_slice,
+    extract_plot_axis_values,
+    plot_slice_axis_name,
 )
 from store.state import State
 
@@ -43,6 +47,8 @@ class MainWindow(QMainWindow):
         self.reference_controller = ComplexReferenceController(self)
         self._source_data = None
         self._current_y_index = 0
+        self._current_plot_plane = PLOT_PLANE_ZX
+        self._current_slice_indices = {"X": 0, "Y": 0, "Z": 0}
         self._current_rotation_index = 0
 
         # Create amplitude pyqtgraph widget
@@ -56,6 +62,7 @@ class MainWindow(QMainWindow):
         )
         self.reference_widget = ComplexReferenceWidget(self.reference_controller)
         self.rotation_slice_widget = RotationSliceSelectorWidget()
+        self.plot_plane_widget = PlotPlaneSelectorWidget()
         self.y_slice_widget = YSliceSelectorWidget()
         self.show_late_samples_checkbox = QCheckBox("Show late samples", self)
         self.show_late_samples_checkbox.setChecked(True)
@@ -68,6 +75,7 @@ class MainWindow(QMainWindow):
         self.rotation_slice_widget.rotation_index_changed.connect(
             self._on_rotation_slice_changed
         )
+        self.plot_plane_widget.plane_changed.connect(self._on_plot_plane_changed)
         self.y_slice_widget.y_index_changed.connect(self._on_y_slice_changed)
         self.show_late_samples_checkbox.toggled.connect(
             self._set_late_sample_markers_visible
@@ -82,6 +90,7 @@ class MainWindow(QMainWindow):
         plots_layout.addWidget(self.phase_widget, stretch=1)
 
         left_layout.addWidget(self.rotation_slice_widget)
+        left_layout.addWidget(self.plot_plane_widget)
         left_layout.addWidget(self.y_slice_widget)
         left_layout.addWidget(self.show_late_samples_checkbox)
         left_layout.addWidget(self.reference_widget)
@@ -110,19 +119,7 @@ class MainWindow(QMainWindow):
 
         # Initialize with default data
 
-        data = np.random.normal(size=(200, 100)).astype(np.float32)
-        data[20:80, 20:80] += 2.0
-        data = pg.gaussianFilter(data, (3, 3)).astype(np.float32)
-        data += np.random.normal(size=(200, 100)).astype(np.float32) * 0.1
-
-        self.update_plot(
-            {
-                "amplitude": data,
-                "phase": data,
-                "x": np.linspace(-10, 10, 200),
-                "z": np.linspace(-5, 5, 100),
-            }
-        )
+        self.update_plot(build_demo_data())
 
     def update_plot(self, data):
         """Update the visualization with new measurement data"""
@@ -140,24 +137,8 @@ class MainWindow(QMainWindow):
             emit_signal=False,
         )
         current_data = self._current_rotation_data()
-        y_axis = self._extract_y_axis(current_data)
-        self.y_slice_widget.set_y_values(y_axis)
-        self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
-        self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)
+        self._update_slice_selector(current_data)
         self._push_current_slice()
-
-    @staticmethod
-    def _extract_y_axis(data):
-        if not isinstance(data, dict):
-            return np.array([0.0], dtype=float)
-        amplitude = np.asarray(data.get("amplitude", []))
-        if amplitude.ndim != 3:
-            return np.array([0.0], dtype=float)
-        y_len = amplitude.shape[0]
-        y_axis = np.asarray(data.get("y", np.arange(y_len)), dtype=float)
-        if y_axis.size != y_len:
-            y_axis = np.arange(y_len, dtype=float)
-        return y_axis
 
     @staticmethod
     def _extract_rotation_axis(data):
@@ -186,24 +167,53 @@ class MainWindow(QMainWindow):
             return self._source_data[idx]
         return self._source_data
 
+    def _update_slice_selector(self, data):
+        axis_name = plot_slice_axis_name(self._current_plot_plane)
+        axis_values = extract_plot_axis_values(data, axis_name)
+        self.y_slice_widget.set_axis_name(axis_name)
+        self.y_slice_widget.set_y_values(axis_values)
+        current_index = int(
+            np.clip(
+                self._current_slice_indices.get(axis_name, 0),
+                0,
+                axis_values.size - 1,
+            )
+        )
+        self._current_slice_indices[axis_name] = current_index
+        if axis_name == "Y":
+            self._current_y_index = current_index
+        self.y_slice_widget.set_index(current_index, emit_signal=False)
+
+    def _on_plot_plane_changed(self, plane):
+        self._current_plot_plane = plane
+        current_data = self._current_rotation_data()
+        self._update_slice_selector(current_data)
+        self._push_current_slice()
+
     def _on_rotation_slice_changed(self, rotation_index):
         self._current_rotation_index = int(rotation_index)
         current_data = self._current_rotation_data()
-        y_axis = self._extract_y_axis(current_data)
-        self.y_slice_widget.set_y_values(y_axis)
-        self._current_y_index = int(np.clip(self._current_y_index, 0, y_axis.size - 1))
-        self.y_slice_widget.set_index(self._current_y_index, emit_signal=False)
+        self._update_slice_selector(current_data)
         self._push_current_slice()
 
     def _on_y_slice_changed(self, y_index):
-        self._current_y_index = int(y_index)
+        axis_name = plot_slice_axis_name(self._current_plot_plane)
+        self._current_slice_indices[axis_name] = int(y_index)
+        if axis_name == "Y":
+            self._current_y_index = int(y_index)
         self._push_current_slice()
 
     def _push_current_slice(self):
         if self._source_data is None:
             return
+        axis_name = plot_slice_axis_name(self._current_plot_plane)
+        slice_index = self._current_slice_indices.get(axis_name, 0)
         self.reference_controller.set_raw_data(
-            extract_xz_slice(self._current_rotation_data(), self._current_y_index)
+            extract_axis_slice(
+                self._current_rotation_data(),
+                self._current_plot_plane,
+                slice_index,
+            )
         )
 
     def _apply_corrected_data(self, data):
