@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction
 
+from application.visualization.grouping import group_rotation_blocks_by_frequency
 from constants import DataTableColumns
 from interface.comment_dialog import CommentDialogBox
 from interface.plot_widgets import DataVisualizationWindow
@@ -131,7 +132,7 @@ class TableView(QtWidgets.QTableView):
             # Single data dictionary - open one window
             self.open_visualization_window(data, measure.comment)
         elif isinstance(data, list):
-            rotation_groups = self._group_rotation_data(data)
+            rotation_groups = group_rotation_blocks_by_frequency(data)
             if rotation_groups:
                 for grouped_data in rotation_groups:
                     self.open_visualization_window(grouped_data, measure.comment)
@@ -139,30 +140,6 @@ class TableView(QtWidgets.QTableView):
                 # List of data dictionaries - open multiple windows
                 for single_data in data:
                     self.open_visualization_window(single_data, measure.comment)
-
-    @staticmethod
-    def _group_rotation_data(data):
-        blocks = [
-            item for item in data if isinstance(item, dict) and "rotation_angle" in item
-        ]
-        if not blocks:
-            return []
-
-        groups = {}
-        for item in blocks:
-            key = (
-                item.get("freq_1"),
-                item.get("freq_2"),
-                item.get("amp_1"),
-                item.get("amp_2"),
-            )
-            groups.setdefault(key, []).append(item)
-
-        grouped_data = []
-        for items in groups.values():
-            items.sort(key=lambda block: float(block.get("rotation_angle", 0.0)))
-            grouped_data.append(items)
-        return grouped_data
 
     def open_visualization_window(self, data, comment: str = ""):
         """Open a visualization window for the given data"""

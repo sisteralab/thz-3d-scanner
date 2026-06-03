@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
 )
 
+from application.visualization.grouping import group_rotation_blocks_by_frequency
 from interface.log import LogHandler, LogWidget
 from interface.memory_monitor import MemoryMonitor
 from interface.manager_widget import ManagerWidget
@@ -155,6 +156,10 @@ class MainWindow(QMainWindow):
             return
         self._pending_plot_data = None
         self._last_plot_update_time = time.monotonic()
+        if isinstance(data, list):
+            grouped_data = group_rotation_blocks_by_frequency(data)
+            if grouped_data:
+                data = grouped_data[-1]
         self._source_data = data
         rotation_axis = self._extract_rotation_axis(data)
         self.rotation_slice_widget.set_rotation_values(rotation_axis)
