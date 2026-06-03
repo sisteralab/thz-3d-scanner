@@ -416,21 +416,37 @@ class MeasureThread(QThread):
         if not self._calibration_enabled() or not State.measure_running:
             return False
 
-        target_x = self.center_calibration_x
-        target_y = self.center_calibration_y
-        target_z = self.center_calibration_z
+        initial_x = self._get_axis_position(State.scanner.id_x)
+        initial_y = self._get_axis_position(State.scanner.id_y)
+        initial_z = self._get_axis_position(State.scanner.id_z)
 
-        if State.scanner.id_y:
+        target_x = (
+            self.center_calibration_x
+            if self.use_x_sweep or initial_x is None
+            else initial_x
+        )
+        target_y = (
+            self.center_calibration_y
+            if self.use_y_sweep or initial_y is None
+            else initial_y
+        )
+        target_z = (
+            self.center_calibration_z
+            if self.use_z_sweep or initial_z is None
+            else initial_z
+        )
+
+        if self.use_y_sweep and State.scanner.id_y:
             State.scanner.move_y(target_y)
             if not State.measure_running:
                 return False
             self.msleep(self.y_movement_delay)
-        if State.scanner.id_x:
+        if self.use_x_sweep and State.scanner.id_x:
             State.scanner.move_x(target_x)
             if not State.measure_running:
                 return False
             self.msleep(self.x_movement_delay)
-        if State.scanner.id_z:
+        if self.use_z_sweep and State.scanner.id_z:
             State.scanner.move_z(target_z)
             if not State.measure_running:
                 return False
@@ -473,18 +489,27 @@ class MeasureThread(QThread):
                 drift_phase_rad = float(np.angle(drift))
 
         calibration_points = full_data.setdefault("calibration_points", [])
+        actual_x = self._get_axis_position(State.scanner.id_x)
+        actual_y = self._get_axis_position(State.scanner.id_y)
+        actual_z = self._get_axis_position(State.scanner.id_z)
         calibration_point = {
             "line_number": int(line_number),
             "after_y_index": None if step_y is None else int(step_y),
             "after_x_index": None if step_x is None else int(step_x),
             "after_y": None if step_y is None else float(self.y_range[step_y]),
             "after_x": None if step_x is None else float(self.x_range[step_x]),
+            "requested_target_x": float(self.center_calibration_x),
+            "requested_target_y": float(self.center_calibration_y),
+            "requested_target_z": float(self.center_calibration_z),
             "target_x": float(target_x),
             "target_y": float(target_y),
             "target_z": float(target_z),
-            "actual_x": self._get_axis_position(State.scanner.id_x),
-            "actual_y": self._get_axis_position(State.scanner.id_y),
-            "actual_z": self._get_axis_position(State.scanner.id_z),
+            "actual_x": actual_x,
+            "actual_y": actual_y,
+            "actual_z": actual_z,
+            "x_moved": bool(self.use_x_sweep),
+            "y_moved": bool(self.use_y_sweep),
+            "z_moved": bool(self.use_z_sweep),
             "freq_1": float(freq_1),
             "freq_2": float(freq_2),
             "amp_1": full_data.get("amp_1"),
@@ -508,12 +533,12 @@ class MeasureThread(QThread):
             full_data["center_calibration"]["reference_amplitude"] = amplitude
             full_data["center_calibration"]["reference_phase"] = phase
         elif step_y is not None and step_x is not None:
-            if State.scanner.id_y:
+            if self.use_y_sweep and State.scanner.id_y:
                 State.scanner.move_y(float(self.y_range[step_y]))
                 if not State.measure_running:
                     return None
                 self.msleep(self.y_movement_delay)
-            if State.scanner.id_x:
+            if self.use_x_sweep and State.scanner.id_x:
                 State.scanner.move_x(float(self.x_range[step_x]))
                 if not State.measure_running:
                     return None
@@ -1556,11 +1581,20 @@ class MeasureWidget(QGroupBox):
         if self.z_fly_check.isChecked() and self.z_fly_speed.value() <= 0:
             logger.warning("Z Fly speed must be > 0!")
             return
-        if self.center_calibration_enabled.isChecked() and (
-            not State.scanner.id_x or not State.scanner.id_y or not State.scanner.id_z
-        ):
-            logger.warning("Center calibration requires initialized X, Y and Z axes!")
-            return
+        if self.center_calibration_enabled.isChecked():
+            missing_calibration_axes = []
+            if self.x_check.isChecked() and not State.scanner.id_x:
+                missing_calibration_axes.append("X")
+            if self.y_check.isChecked() and not State.scanner.id_y:
+                missing_calibration_axes.append("Y")
+            if self.z_check.isChecked() and not State.scanner.id_z:
+                missing_calibration_axes.append("Z")
+            if missing_calibration_axes:
+                logger.warning(
+                    "Center calibration requires initialized enabled axes: "
+                    + ", ".join(missing_calibration_axes)
+                )
+                return
 
         State.generator_freq_start_1 = self.generator_freq_start_1.value()
         State.generator_freq_stop_1 = self.generator_freq_stop_1.value()
