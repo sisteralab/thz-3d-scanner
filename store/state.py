@@ -82,6 +82,7 @@ class State:
         settings.value("Measure/vna_average_enabled", "false") == "true"
     )
     plot_update_hz: float = float(settings.value("Measure/plot_update_hz", 10.0))
+    plot_max_pixels: int = int(settings.value("Measure/plot_max_pixels", 0))
     center_calibration_enabled: bool = (
         settings.value("Measure/center_calibration_enabled", "false") == "true"
     )
@@ -181,6 +182,7 @@ class State:
             "Measure/vna_average_enabled", cls.measure_vna_average_enabled
         )
         cls.settings.setValue("Measure/plot_update_hz", cls.plot_update_hz)
+        cls.settings.setValue("Measure/plot_max_pixels", cls.plot_max_pixels)
         cls.settings.setValue(
             "Measure/center_calibration_enabled",
             cls.center_calibration_enabled,

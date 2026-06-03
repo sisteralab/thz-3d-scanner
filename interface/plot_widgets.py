@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtGui
@@ -14,66 +16,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from store.state import State
-
-
-PLOT_PLANE_ZX = "ZX"
-PLOT_PLANE_XZ = "XZ"
-PLOT_PLANE_YX = "YX"
-PLOT_PLANE_XY = "XY"
-PLOT_PLANE_ZY = "ZY"
-PLOT_PLANE_YZ = "YZ"
-PLOT_PLANE_OPTIONS = (
-    (PLOT_PLANE_ZX, "Z(X)"),
-    (PLOT_PLANE_XZ, "X(Z)"),
-    (PLOT_PLANE_YX, "Y(X)"),
-    (PLOT_PLANE_XY, "X(Y)"),
-    (PLOT_PLANE_ZY, "Z(Y)"),
-    (PLOT_PLANE_YZ, "Y(Z)"),
+from application.visualization.plot_slicing import (
+    PLOT_PLANE_OPTIONS,
+    PLOT_PLANE_ZX,
+    extract_axis_slice,
+    extract_plot_axis_values,
+    plot_slice_axis_name,
 )
-PLOT_PLANE_AXIS_MAP = {
-    PLOT_PLANE_ZX: ("X", "Z"),
-    PLOT_PLANE_XZ: ("Z", "X"),
-    PLOT_PLANE_YX: ("X", "Y"),
-    PLOT_PLANE_XY: ("Y", "X"),
-    PLOT_PLANE_ZY: ("Y", "Z"),
-    PLOT_PLANE_YZ: ("Z", "Y"),
-}
-SOURCE_AXIS_ORDER = ("Y", "X", "Z")
-SOURCE_AXIS_INDEX = {"Y": 0, "X": 1, "Z": 2}
-SOURCE_AXIS_KEY = {"Y": "y", "X": "x", "Z": "z"}
-
-
-def plot_plane_axes(plane):
-    return PLOT_PLANE_AXIS_MAP.get(plane, PLOT_PLANE_AXIS_MAP[PLOT_PLANE_ZX])
-
-
-def plot_slice_axis_name(plane):
-    horizontal_axis, vertical_axis = plot_plane_axes(plane)
-    for axis_name in ("X", "Y", "Z"):
-        if axis_name not in (horizontal_axis, vertical_axis):
-            return axis_name
-    return "Y"
-
-
-def extract_plot_axis_values(data, axis_name):
-    if not isinstance(data, dict):
-        return np.array([0.0], dtype=float)
-
-    amplitude = np.asarray(data.get("amplitude", []))
-    if amplitude.ndim != 3:
-        return np.array([0.0], dtype=float)
-
-    axis_name = str(axis_name).upper()
-    expected_size = amplitude.shape[SOURCE_AXIS_INDEX.get(axis_name, 0)]
-    axis_key = SOURCE_AXIS_KEY.get(axis_name, "y")
-    return _axis_values(data, axis_key, expected_size)
+from store.state import State
 
 
 def normalize_phase(phase_data):
     """Normalize phase to [-pi, pi]."""
-    phase_array = np.asarray(phase_data, dtype=float)
-    return (phase_array + np.pi) % (2 * np.pi) - np.pi
+    phase_array = np.asarray(phase_data, dtype=np.float32)
+    return (phase_array + np.float32(np.pi)) % np.float32(2 * np.pi) - np.float32(np.pi)
+
+
+def phase_rad_to_degrees(phase_data):
+    phase = np.asarray(phase_data, dtype=np.float32)
+    return np.multiply(phase, np.float32(180.0 / np.pi), dtype=np.float32)
 
 
 def amplitude_phase_to_complex(amplitude_db, phase_rad):
@@ -87,89 +48,6 @@ def complex_to_amplitude_phase(complex_data):
     amplitude_db = 20 * np.log10(np.clip(magnitude, 1e-12, None))
     phase = normalize_phase(np.angle(complex_data))
     return amplitude_db, phase
-
-
-def _axis_values(data, axis_name, expected_size):
-    values = np.asarray(data.get(axis_name, np.arange(expected_size)), dtype=float)
-    if values.size != expected_size:
-        values = np.arange(expected_size, dtype=float)
-    return values
-
-
-def extract_axis_slice(data, plane=PLOT_PLANE_ZX, slice_index=0):
-    """Return a 2D slice with shape [horizontal_axis, vertical_axis]."""
-    if not isinstance(data, dict):
-        return {}
-
-    amplitude = np.asarray(data.get("amplitude", []))
-    if amplitude.ndim != 3:
-        return data
-
-    axis_sizes = {
-        "Y": amplitude.shape[0],
-        "X": amplitude.shape[1],
-        "Z": amplitude.shape[2],
-    }
-    if any(size == 0 for size in axis_sizes.values()):
-        return data
-
-    sliced = dict(data)
-    axis_values = {
-        axis_name: _axis_values(
-            data,
-            SOURCE_AXIS_KEY[axis_name],
-            axis_sizes[axis_name],
-        )
-        for axis_name in SOURCE_AXIS_ORDER
-    }
-    horizontal_axis_name, vertical_axis_name = plot_plane_axes(plane)
-    slice_axis = plot_slice_axis_name(plane)
-    slice_values = axis_values[slice_axis]
-    slice_idx = int(np.clip(slice_index, 0, slice_values.size - 1))
-    horizontal_values = axis_values[horizontal_axis_name]
-    vertical_values = axis_values[vertical_axis_name]
-    remaining_axis_order = [
-        axis_name for axis_name in SOURCE_AXIS_ORDER if axis_name != slice_axis
-    ]
-
-    def slice_array(arr):
-        cut = np.take(arr, slice_idx, axis=SOURCE_AXIS_INDEX[slice_axis])
-        transpose_axes = (
-            remaining_axis_order.index(horizontal_axis_name),
-            remaining_axis_order.index(vertical_axis_name),
-        )
-        if transpose_axes == (0, 1):
-            return cut
-        return np.transpose(cut, transpose_axes)
-
-    for key in (
-        "amplitude",
-        "phase",
-        "complex_real",
-        "complex_imag",
-        "z_request",
-        "z_response",
-        "vna_latency_ms",
-        "late_sample",
-    ):
-        arr = np.asarray(data.get(key, []))
-        if arr.ndim == 3 and arr.shape == amplitude.shape:
-            sliced[key] = slice_array(arr)
-
-    sliced["x"] = horizontal_values
-    sliced["z"] = vertical_values
-    sliced["plot_plane"] = plane
-    sliced["horizontal_axis_name"] = horizontal_axis_name
-    sliced["vertical_axis_name"] = vertical_axis_name
-    sliced["slice_axis_name"] = slice_axis
-    sliced["slice_index"] = slice_idx
-    sliced["slice_value"] = float(slice_values[slice_idx])
-    return sliced
-
-
-def extract_xz_slice(data, y_index):
-    """Return 2D x-z slice from either 2D or 3D data payload."""
-    return extract_axis_slice(data, PLOT_PLANE_ZX, y_index)
 
 
 class ComplexReferenceController(QObject):
@@ -256,6 +134,8 @@ class ComplexReferenceController(QObject):
         if not isinstance(data, dict):
             return {}
         # Keep full metadata for UI, but never pass heavy raw traces through live update signal.
+        if "vna_data" not in data:
+            return data
         return {key: value for key, value in data.items() if key != "vna_data"}
 
     def _build_empty_info(self, data=None):
@@ -279,7 +159,7 @@ class ComplexReferenceController(QObject):
 
     @staticmethod
     def _get_axes(data):
-        amplitude = np.asarray(data.get("amplitude", []), dtype=float)
+        amplitude = np.asarray(data.get("amplitude", []))
         if amplitude.ndim != 2:
             return np.array([]), np.array([])
 
@@ -779,15 +659,26 @@ class BasePlotWidget(QWidget):
         self.plot_item.showGrid(x=True, y=True, alpha=0.3)
 
         self.image_item = pg.ImageItem(axisOrder="col-major")
+        if hasattr(self.image_item, "setAutoDownsample"):
+            self.image_item.setAutoDownsample(False)
         self.plot_item.addItem(self.image_item)
 
         if colormap_name == "phase":
             cmap = pg.ColorMap([0, 1], [(0, 0, 255), (255, 0, 0)])
-            self.image_item.setColorMap(cmap)
+            self._image_lut = cmap.getLookupTable(nPts=256).astype(
+                np.uint8,
+                copy=False,
+            )
+            self.image_item.setLookupTable(self._image_lut)
             self.hist_item.gradient.setColorMap(cmap)
         else:
+            cmap = pg.colormap.get(colormap_name)
+            self._image_lut = cmap.getLookupTable(nPts=256).astype(
+                np.uint8,
+                copy=False,
+            )
             self.hist_item.gradient.loadPreset(colormap_name)
-            self.image_item.setColorMap(pg.colormap.get(colormap_name))
+            self.image_item.setLookupTable(self._image_lut)
 
         self.hist_item.setImageItem(self.image_item)
 
@@ -799,14 +690,16 @@ class BasePlotWidget(QWidget):
         )
         self.plot_item.addItem(self.reference_points_scatter)
 
-        self.late_samples_scatter = pg.ScatterPlotItem(
-            size=10,
-            pen=pg.mkPen((120, 72, 32), width=2),
-            brush=pg.mkBrush(0, 0, 0, 0),
-            symbol="o",
+        self.late_samples_overlay_item = pg.ImageItem(axisOrder="col-major")
+        if hasattr(self.late_samples_overlay_item, "setAutoDownsample"):
+            self.late_samples_overlay_item.setAutoDownsample(False)
+        self.late_samples_overlay_lut = np.asarray(
+            [[0, 0, 0, 0], [120, 72, 32, 220]],
+            dtype=np.uint8,
         )
-        self.late_samples_scatter.setZValue(9)
-        self.plot_item.addItem(self.late_samples_scatter)
+        self.late_samples_overlay_item.setLookupTable(self.late_samples_overlay_lut)
+        self.late_samples_overlay_item.setZValue(9)
+        self.plot_item.addItem(self.late_samples_overlay_item)
 
         self.roi = pg.ROI([0, 0], [10, 2], pen=(0, 9))
         self.roi.addScaleHandle([0.5, 1], [0.5, 0.5])
@@ -843,17 +736,30 @@ class BasePlotWidget(QWidget):
         self.roi_data_curve = None
         self.vertical_roi_data_curve = None
         self.display_data = None
+        self.display_late_mask = None
+        self._phase_display_buffer = None
+        self._last_axis_render_key = None
+        self._cached_levels = None
+        self._last_levels_update_time = 0.0
+        self._levels_update_interval_s = 0.5
+        self._last_geometry_key = None
+        self._display_stride_x = 1
+        self._display_stride_z = 1
+        self._late_mask_image_buffer = None
         self.x_axis = np.array([])
         self.z_axis = np.array([])
         self._last_markers_render_key = None
         self.show_late_samples = True
-        self.max_late_sample_markers = 5000
 
         # Throttle updates to limit FPS and reduce CPU/GPU load
         self._update_timer = QTimer(self)
         self._update_timer.setInterval(self._update_interval_ms())
         self._update_timer.setSingleShot(True)
         self._update_timer.timeout.connect(self._perform_deferred_updates)
+        self._roi_timer = QTimer(self)
+        self._roi_timer.setInterval(250)
+        self._roi_timer.setSingleShot(True)
+        self._roi_timer.timeout.connect(self._perform_roi_update)
         self._pending_visualization_update = False
         self._pending_roi_update = False
 
@@ -905,6 +811,92 @@ class BasePlotWidget(QWidget):
         z0 = float(pos.y())
         z1 = float(pos.y() + size.y())
         return min(x0, x1), max(x0, x1), min(z0, z1), max(z0, z1)
+
+    @staticmethod
+    def _as_float32_view(value):
+        data = np.asarray(value)
+        if not np.issubdtype(data.dtype, np.number):
+            return data.astype(np.float32, copy=False)
+        if data.dtype == np.float32:
+            return data
+        return data.astype(np.float32, copy=False)
+
+    @staticmethod
+    def _display_stride(shape):
+        if len(shape) != 2:
+            return 1, 1
+        pixels = int(shape[0]) * int(shape[1])
+        max_pixels = int(getattr(State, "plot_max_pixels", 0))
+        if max_pixels <= 0:
+            return 1, 1
+        max_pixels = max(10_000, max_pixels)
+        if pixels <= max_pixels:
+            return 1, 1
+        scale = float(np.sqrt(pixels / max_pixels))
+        stride = max(1, int(np.ceil(scale)))
+        return stride, stride
+
+    @staticmethod
+    def _downsample_for_display(data, x_axis, z_axis):
+        stride_x, stride_z = BasePlotWidget._display_stride(data.shape)
+        if stride_x == 1 and stride_z == 1:
+            return data, x_axis, z_axis, stride_x, stride_z
+        return (
+            data[::stride_x, ::stride_z],
+            x_axis[::stride_x],
+            z_axis[::stride_z],
+            stride_x,
+            stride_z,
+        )
+
+    def _phase_degrees_for_display(self, phase_rad):
+        phase = self._as_float32_view(phase_rad)
+        if (
+            self._phase_display_buffer is None
+            or self._phase_display_buffer.shape != phase.shape
+        ):
+            self._phase_display_buffer = np.empty(phase.shape, dtype=np.float32)
+        np.multiply(
+            phase,
+            np.float32(180.0 / np.pi),
+            out=self._phase_display_buffer,
+        )
+        return self._phase_display_buffer
+
+    def _levels_for_display(self, data):
+        if self.data_key == "phase":
+            return (-180.0, 180.0)
+        now = time.monotonic()
+        if (
+            self._cached_levels is not None
+            and now - self._last_levels_update_time < self._levels_update_interval_s
+        ):
+            return self._cached_levels
+        if data.size == 0:
+            return (0.0, 1.0)
+        min_value = float(np.min(data))
+        max_value = float(np.max(data))
+        if not np.isfinite(min_value) or not np.isfinite(max_value):
+            finite = data[np.isfinite(data)]
+            if finite.size == 0:
+                return (0.0, 1.0)
+            min_value = float(np.min(finite))
+            max_value = float(np.max(finite))
+        if min_value == max_value:
+            self._cached_levels = (min_value - 0.5, max_value + 0.5)
+        else:
+            self._cached_levels = (min_value, max_value)
+        self._last_levels_update_time = now
+        return self._cached_levels
+
+    @staticmethod
+    def _axis_identity(value):
+        if value is None:
+            return None
+        try:
+            return id(value), len(value)
+        except TypeError:
+            return id(value), None
 
     @staticmethod
     def _in_axis_bounds(axis, value):
@@ -960,8 +952,12 @@ class BasePlotWidget(QWidget):
         x_coord = float(self.x_axis[x_idx])
         z_coord = float(self.z_axis[z_idx])
         late_text = ""
-        late_mask = np.asarray(self.current_data.get("late_sample", []), dtype=bool)
-        if late_mask.shape == self.display_data.shape and late_mask[x_idx, z_idx]:
+        late_mask = self.display_late_mask
+        if (
+            late_mask is not None
+            and late_mask.shape == self.display_data.shape
+            and late_mask[x_idx, z_idx]
+        ):
             late_text = " | late sample"
         self.plot_item.setTitle(
             f"{self.title}: {value:.3f}, "
@@ -1024,71 +1020,125 @@ class BasePlotWidget(QWidget):
         if self._pending_visualization_update:
             self._pending_visualization_update = False
             self._update_visualization_internal()
-        if self._pending_roi_update:
-            self._pending_roi_update = False
-            self.update_roi_plot()
+
+    def _perform_roi_update(self):
+        if not self._pending_roi_update:
+            return
+        self._pending_roi_update = False
+        self.update_roi_plot()
 
     def _update_visualization_internal(self):
         """Internal visualization update (called by throttle timer)."""
         if self.current_data is None:
             return
 
-        data = np.asarray(self.current_data.get(self.data_key, []), dtype=float)
+        data_source = self.current_data.get(self.data_key, [])
+        phase_degrees = None
+        if self.data_key == "phase":
+            phase_degrees = self.current_data.get("phase_degrees")
+            if phase_degrees is not None:
+                phase_degrees = np.asarray(phase_degrees)
+                if phase_degrees.ndim == 2:
+                    data_source = phase_degrees
+        data = self._as_float32_view(data_source)
         if data.ndim != 2:
             return
 
-        if self.data_key == "phase":
-            data = normalize_phase(data)
+        if self.data_key == "phase" and phase_degrees is None:
+            data = self._phase_degrees_for_display(data)
+        source_shape = data.shape
 
-        self.display_data = data
         self.horizontal_axis_name = str(
             self.current_data.get("horizontal_axis_name", "X")
         )
         self.vertical_axis_name = str(self.current_data.get("vertical_axis_name", "Z"))
-        self.plot_item.setLabel(
-            "bottom", f"{self.horizontal_axis_name} Position", units="mm"
+        axis_render_key = (self.horizontal_axis_name, self.vertical_axis_name)
+        if axis_render_key != self._last_axis_render_key:
+            self._last_axis_render_key = axis_render_key
+            self.plot_item.setLabel(
+                "bottom", f"{self.horizontal_axis_name} Position", units="mm"
+            )
+            self.plot_item.setLabel(
+                "left", f"{self.vertical_axis_name} Position", units="mm"
+            )
+            self._reset_title()
+
+        if not data.flags.c_contiguous:
+            data = np.ascontiguousarray(data)
+        raw_x = self.current_data.get("x")
+        raw_z = self.current_data.get("z")
+        geometry_key = (
+            data.shape,
+            self._axis_identity(raw_x),
+            self._axis_identity(raw_z),
+            int(getattr(State, "plot_max_pixels", 0)),
         )
-        self.plot_item.setLabel(
-            "left", f"{self.vertical_axis_name} Position", units="mm"
-        )
-        self._reset_title()
+        geometry_changed = geometry_key != self._last_geometry_key
+        if geometry_changed:
+            x_data = np.asarray(
+                raw_x if raw_x is not None else np.arange(data.shape[0])
+            )
+            z_data = np.asarray(
+                raw_z if raw_z is not None else np.arange(data.shape[1])
+            )
+            if x_data.size != data.shape[0]:
+                x_data = np.arange(data.shape[0], dtype=float)
+            else:
+                x_data = x_data.astype(float)
+            if z_data.size != data.shape[1]:
+                z_data = np.arange(data.shape[1], dtype=float)
+            else:
+                z_data = z_data.astype(float)
 
-        x_data = np.asarray(self.current_data.get("x", np.arange(data.shape[0])))
-        z_data = np.asarray(self.current_data.get("z", np.arange(data.shape[1])))
-        if x_data.size != data.shape[0]:
-            x_data = np.arange(data.shape[0], dtype=float)
+            data, x_data, z_data, stride_x, stride_z = self._downsample_for_display(
+                data,
+                x_data,
+                z_data,
+            )
+            self.x_axis = x_data
+            self.z_axis = z_data
+            self._display_stride_x = stride_x
+            self._display_stride_z = stride_z
+            self._last_geometry_key = geometry_key
         else:
-            x_data = x_data.astype(float)
-        if z_data.size != data.shape[1]:
-            z_data = np.arange(data.shape[1], dtype=float)
-        else:
-            z_data = z_data.astype(float)
+            stride_x = self._display_stride_x
+            stride_z = self._display_stride_z
+            if stride_x != 1 or stride_z != 1:
+                data = data[::stride_x, ::stride_z]
+        self.display_data = data
 
-        self.x_axis = x_data
-        self.z_axis = z_data
+        late_mask = np.asarray(self.current_data.get("late_sample", []), dtype=bool)
+        self.display_late_mask = None
+        if late_mask.ndim == 2 and late_mask.shape == source_shape:
+            self.display_late_mask = late_mask[::stride_x, ::stride_z]
+        elif late_mask.shape == data.shape:
+            self.display_late_mask = late_mask
 
-        self.image_item.setImage(data, autoLevels=False)
+        levels = self._levels_for_display(data)
+        self.image_item.setImage(data, autoLevels=False, levels=levels)
 
-        x_edges = self._axis_edges(x_data)
-        z_edges = self._axis_edges(z_data)
-        if x_edges.size >= 2:
-            x_start = float(x_edges[0])
-            x_step = float((x_edges[-1] - x_edges[0]) / max(1, x_data.size))
-        else:
-            x_start = float(x_data[0]) if x_data.size else 0.0
-            x_step = 1.0
-        if z_edges.size >= 2:
-            z_start = float(z_edges[0])
-            z_step = float((z_edges[-1] - z_edges[0]) / max(1, z_data.size))
-        else:
-            z_start = float(z_data[0]) if z_data.size else 0.0
-            z_step = 1.0
+        if geometry_changed:
+            x_edges = self._axis_edges(self.x_axis)
+            z_edges = self._axis_edges(self.z_axis)
+            if x_edges.size >= 2:
+                x_start = float(x_edges[0])
+                x_step = float((x_edges[-1] - x_edges[0]) / max(1, self.x_axis.size))
+            else:
+                x_start = float(self.x_axis[0]) if self.x_axis.size else 0.0
+                x_step = 1.0
+            if z_edges.size >= 2:
+                z_start = float(z_edges[0])
+                z_step = float((z_edges[-1] - z_edges[0]) / max(1, self.z_axis.size))
+            else:
+                z_start = float(self.z_axis[0]) if self.z_axis.size else 0.0
+                z_step = 1.0
 
-        transform = QtGui.QTransform()
-        # Place image cells so axis values match pixel centers.
-        transform.translate(x_start, z_start)
-        transform.scale(float(x_step), float(z_step))
-        self.image_item.setTransform(transform)
+            transform = QtGui.QTransform()
+            # Place image cells so axis values match pixel centers.
+            transform.translate(x_start, z_start)
+            transform.scale(float(x_step), float(z_step))
+            self.image_item.setTransform(transform)
+            self.late_samples_overlay_item.setTransform(transform)
 
         self.update_late_sample_markers()
         self._schedule_roi_update()
@@ -1103,26 +1153,36 @@ class BasePlotWidget(QWidget):
             or self.current_data is None
             or self.display_data is None
         ):
-            self.late_samples_scatter.clear()
+            self.late_samples_overlay_item.clear()
             return
 
-        late_mask = np.asarray(self.current_data.get("late_sample", []), dtype=bool)
+        if self.current_data.get("has_late_samples") is False:
+            self.late_samples_overlay_item.clear()
+            return
+
+        late_mask = self.display_late_mask
+        if late_mask is None:
+            self.late_samples_overlay_item.clear()
+            return
         if late_mask.shape != self.display_data.shape:
-            self.late_samples_scatter.clear()
+            self.late_samples_overlay_item.clear()
             return
 
-        points = np.argwhere(late_mask)
-        if points.size == 0:
-            self.late_samples_scatter.clear()
+        if not bool(np.any(late_mask)):
+            self.late_samples_overlay_item.clear()
             return
 
-        if points.shape[0] > self.max_late_sample_markers:
-            stride = int(np.ceil(points.shape[0] / self.max_late_sample_markers))
-            points = points[::stride]
-
-        self.late_samples_scatter.setData(
-            x=self.x_axis[points[:, 0]],
-            y=self.z_axis[points[:, 1]],
+        if (
+            self._late_mask_image_buffer is None
+            or self._late_mask_image_buffer.shape != late_mask.shape
+        ):
+            self._late_mask_image_buffer = np.empty(late_mask.shape, dtype=np.uint8)
+        self._late_mask_image_buffer[...] = late_mask
+        self.late_samples_overlay_item.setImage(
+            self._late_mask_image_buffer,
+            autoLevels=False,
+            levels=(0, 1),
+            lut=self.late_samples_overlay_lut,
         )
 
     def _schedule_roi_update(self):
@@ -1130,8 +1190,7 @@ class BasePlotWidget(QWidget):
         if self._pending_roi_update:
             return
         self._pending_roi_update = True
-        self._update_timer.setInterval(self._update_interval_ms())
-        self._update_timer.start()
+        self._roi_timer.start()
 
     def update_roi_plot(self):
         if self.display_data is None:
@@ -1371,6 +1430,7 @@ class DataVisualizationWindow(QWidget):
         calibrated_keys = {
             "amplitude": "calibrated_amplitude",
             "phase": "calibrated_phase",
+            "phase_degrees": "calibrated_phase_degrees",
             "complex_real": "calibrated_complex_real",
             "complex_imag": "calibrated_complex_imag",
         }

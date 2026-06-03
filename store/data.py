@@ -4,12 +4,27 @@ from datetime import datetime
 from typing import Union, Dict, Any
 
 import json
+import numpy as np
 from PySide6 import QtGui
 from PySide6.QtCore import QAbstractTableModel, Qt, QModelIndex
 from PySide6.QtWidgets import QFileDialog
 
 from constants import DataTableColumns
 from utils.resources import asset_path
+
+
+def to_json_compatible(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: to_json_compatible(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [to_json_compatible(item) for item in value]
+    if isinstance(value, tuple):
+        return [to_json_compatible(item) for item in value]
+    return value
 
 
 class MeasureList(list):
@@ -154,7 +169,7 @@ class MeasureModel:
             "comment": self.comment,
             "started": self.started.strftime("%Y-%m-%d %H:%M:%S"),
             "finished": finished.strftime("%Y-%m-%d %H:%M:%S"),
-            "data": self.data,
+            "data": to_json_compatible(self.data),
         }
 
 

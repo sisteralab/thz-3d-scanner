@@ -1,7 +1,9 @@
 import logging
+import time
 
 import numpy as np
 from PySide6 import QtGui
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
@@ -50,6 +52,11 @@ class MainWindow(QMainWindow):
         self._current_plot_plane = PLOT_PLANE_ZX
         self._current_slice_indices = {"X": 0, "Y": 0, "Z": 0}
         self._current_rotation_index = 0
+        self._pending_plot_data = None
+        self._last_plot_update_time = 0.0
+        self._plot_update_timer = QTimer(self)
+        self._plot_update_timer.setSingleShot(True)
+        self._plot_update_timer.timeout.connect(self._apply_pending_plot_update)
 
         # Create amplitude pyqtgraph widget
         self.amplitude_widget = AmplitudePlotWidget(
@@ -133,6 +140,21 @@ class MainWindow(QMainWindow):
         # Clean up heavy raw data to reduce RAM usage
         if isinstance(data, dict) and "vna_data" in data:
             data = {k: v for k, v in data.items() if k != "vna_data"}
+        self._pending_plot_data = data
+        if self._plot_update_timer.isActive():
+            return
+
+        update_hz = max(0.01, float(getattr(State, "plot_update_hz", 10.0)))
+        elapsed_ms = int((time.monotonic() - self._last_plot_update_time) * 1000)
+        delay_ms = max(0, int(round(1000 / update_hz)) - elapsed_ms)
+        self._plot_update_timer.start(delay_ms)
+
+    def _apply_pending_plot_update(self):
+        data = self._pending_plot_data
+        if data is None:
+            return
+        self._pending_plot_data = None
+        self._last_plot_update_time = time.monotonic()
         self._source_data = data
         rotation_axis = self._extract_rotation_axis(data)
         self.rotation_slice_widget.set_rotation_values(rotation_axis)
@@ -230,6 +252,7 @@ class MainWindow(QMainWindow):
         calibrated_keys = {
             "amplitude": "calibrated_amplitude",
             "phase": "calibrated_phase",
+            "phase_degrees": "calibrated_phase_degrees",
             "complex_real": "calibrated_complex_real",
             "complex_imag": "calibrated_complex_imag",
         }
