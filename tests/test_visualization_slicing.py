@@ -1,6 +1,10 @@
 import unittest
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+from PySide6.QtWidgets import QApplication
 
 from application.visualization.plot_slicing import (
     PLOT_PLANE_XY,
@@ -8,11 +12,19 @@ from application.visualization.plot_slicing import (
     extract_axis_slice,
     plot_slice_axis_name,
 )
-from interface.plot_widgets import BasePlotWidget, phase_rad_to_degrees
+from interface.plot_widgets import (
+    AmplitudePlotWidget,
+    BasePlotWidget,
+    phase_rad_to_degrees,
+)
 from store.state import State
 
 
 class VisualizationSlicingTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
     def test_extract_axis_slice_returns_view_and_metadata(self):
         amplitude = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
         data = {
@@ -75,6 +87,38 @@ class VisualizationSlicingTest(unittest.TestCase):
     def test_phase_display_is_degrees(self):
         degrees = phase_rad_to_degrees(np.array([0.0, np.pi], dtype=np.float32))
         self.assertTrue(np.allclose(degrees, [0.0, 180.0], atol=1e-4))
+
+    def test_manual_color_levels_survive_data_update(self):
+        widget = AmplitudePlotWidget()
+        x_axis = np.arange(4, dtype=np.float32)
+        z_axis = np.arange(4, dtype=np.float32)
+        first = np.arange(16, dtype=np.float32).reshape(4, 4)
+        second = first + np.float32(100.0)
+        payload = {
+            "x": x_axis,
+            "z": z_axis,
+            "amplitude": first,
+            "has_late_samples": False,
+        }
+
+        widget.update_data(payload)
+        widget._perform_deferred_updates()
+        self.app.processEvents()
+
+        widget.hist_item.setLevels(2.0, 8.0)
+        self.app.processEvents()
+        self.assertTrue(widget._manual_levels_enabled)
+
+        payload["amplitude"] = second
+        widget.update_data(payload)
+        widget._perform_deferred_updates()
+        self.app.processEvents()
+
+        self.assertEqual(widget._manual_levels, (2.0, 8.0))
+        self.assertEqual(tuple(widget.hist_item.getLevels()), (2.0, 8.0))
+
+        widget.reset_auto_levels()
+        self.assertFalse(widget._manual_levels_enabled)
 
 
 if __name__ == "__main__":

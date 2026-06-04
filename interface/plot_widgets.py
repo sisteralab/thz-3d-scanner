@@ -681,6 +681,12 @@ class BasePlotWidget(QWidget):
             self.image_item.setLookupTable(self._image_lut)
 
         self.hist_item.setImageItem(self.image_item)
+        self._setting_hist_levels = False
+        self._manual_levels_enabled = False
+        self._manual_levels = None
+        self._last_applied_levels = None
+        self.hist_item.sigLevelsChanged.connect(self._on_hist_levels_changed)
+        self.hist_item.sigLevelChangeFinished.connect(self._on_hist_levels_changed)
 
         self.reference_points_scatter = pg.ScatterPlotItem(
             size=11,
@@ -724,6 +730,18 @@ class BasePlotWidget(QWidget):
         self.roi_plot_item.showGrid(x=True, y=True, alpha=0.3)
         self.roi_plot_item.addLegend(offset=(10, 10))
 
+        color_controls_layout = QHBoxLayout()
+        color_controls_layout.setContentsMargins(0, 0, 0, 0)
+        color_controls_layout.setSpacing(6)
+        self.auto_levels_button = QPushButton("Auto")
+        self.auto_levels_button.setMaximumWidth(64)
+        self.auto_levels_button.setToolTip("Re-enable automatic color scale")
+        self.auto_levels_button.clicked.connect(self.reset_auto_levels)
+        color_controls_layout.addWidget(QLabel(f"{title} color"))
+        color_controls_layout.addWidget(self.auto_levels_button)
+        color_controls_layout.addStretch(1)
+
+        main_layout.addLayout(color_controls_layout)
         main_layout.addWidget(self.graphics_layout, stretch=1)
         main_layout.addWidget(self.roi_plot_item, stretch=1)
         self.setLayout(main_layout)
@@ -864,6 +882,8 @@ class BasePlotWidget(QWidget):
         return self._phase_display_buffer
 
     def _levels_for_display(self, data):
+        if self._manual_levels_enabled and self._manual_levels is not None:
+            return self._manual_levels
         if self.data_key == "phase":
             return (-180.0, 180.0)
         now = time.monotonic()
@@ -888,6 +908,42 @@ class BasePlotWidget(QWidget):
             self._cached_levels = (min_value, max_value)
         self._last_levels_update_time = now
         return self._cached_levels
+
+    def _apply_hist_levels(self, levels):
+        normalized_levels = (float(levels[0]), float(levels[1]))
+        if self._last_applied_levels == normalized_levels:
+            return
+        self._last_applied_levels = normalized_levels
+        self._setting_hist_levels = True
+        try:
+            self.hist_item.setLevels(*normalized_levels)
+        finally:
+            self._setting_hist_levels = False
+
+    def _on_hist_levels_changed(self, *_args):
+        if self._setting_hist_levels:
+            return
+        levels = self.hist_item.getLevels()
+        if levels is None:
+            return
+        self._manual_levels = (float(levels[0]), float(levels[1]))
+        self._manual_levels_enabled = True
+        self._last_applied_levels = self._manual_levels
+
+    def reset_auto_levels(self):
+        self._manual_levels_enabled = False
+        self._manual_levels = None
+        self._cached_levels = None
+        self._last_applied_levels = None
+        self._last_levels_update_time = 0.0
+        if self.display_data is not None:
+            levels = self._levels_for_display(self.display_data)
+            self._apply_hist_levels(levels)
+            self.image_item.setImage(
+                self.display_data,
+                autoLevels=False,
+                levels=levels,
+            )
 
     @staticmethod
     def _axis_identity(value):
@@ -1116,6 +1172,7 @@ class BasePlotWidget(QWidget):
 
         levels = self._levels_for_display(data)
         self.image_item.setImage(data, autoLevels=False, levels=levels)
+        self._apply_hist_levels(levels)
 
         if geometry_changed:
             x_edges = self._axis_edges(self.x_axis)
