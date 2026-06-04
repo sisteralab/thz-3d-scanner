@@ -875,6 +875,7 @@ class MeasureThread(QThread):
                         },
                     )
                     preview_data = create_preview_view(full_data)
+                    self.measure.data.append(full_data)
                     angle_has_data = False
                     angle_line_count = 0
                     last_completed_step_y = None
@@ -1054,7 +1055,6 @@ class MeasureThread(QThread):
 
                     if angle_has_data:
                         self._emit_preview_data(preview_data, force=True)
-                        self.measure.data.append(full_data)
                     if stop_requested:
                         break
                 if stop_requested:
@@ -1067,5 +1067,5 @@ class MeasureThread(QThread):
             if self.use_z_fly_mode and self.use_z_sweep:
                 self._apply_z_profile(self._z_fast_profile)
 
-        self.final_data.emit(self.measure.data)
         self.measure.save(True)
+        self.final_data.emit(self.measure.data)

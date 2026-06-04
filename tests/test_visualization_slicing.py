@@ -15,6 +15,7 @@ from application.visualization.plot_slicing import (
 from interface.plot_widgets import (
     AmplitudePlotWidget,
     BasePlotWidget,
+    PhasePlotWidget,
     phase_rad_to_degrees,
 )
 from store.state import State
@@ -119,6 +120,38 @@ class VisualizationSlicingTest(unittest.TestCase):
 
         widget.reset_auto_levels()
         self.assertFalse(widget._manual_levels_enabled)
+
+    def test_phase_auto_levels_recompute_after_demo_data(self):
+        widget = PhasePlotWidget()
+        x_axis = np.arange(4, dtype=np.float32)
+        z_axis = np.arange(4, dtype=np.float32)
+        demo_phase = np.linspace(-5.0, 5.0, 16, dtype=np.float32).reshape(4, 4)
+        real_phase = np.linspace(40.0, 80.0, 16, dtype=np.float32).reshape(4, 4)
+        payload = {
+            "x": x_axis,
+            "z": z_axis,
+            "phase": demo_phase,
+            "phase_degrees": demo_phase,
+            "has_late_samples": False,
+        }
+
+        widget.update_data(payload)
+        widget._perform_deferred_updates()
+        self.app.processEvents()
+        self.assertEqual(tuple(widget.hist_item.getLevels()), (-5.0, 5.0))
+
+        payload = {
+            "x": x_axis,
+            "z": z_axis,
+            "phase": real_phase,
+            "phase_degrees": real_phase,
+            "has_late_samples": False,
+        }
+        widget.update_data(payload)
+        widget._perform_deferred_updates()
+        self.app.processEvents()
+
+        self.assertEqual(tuple(widget.hist_item.getLevels()), (40.0, 80.0))
 
 
 if __name__ == "__main__":

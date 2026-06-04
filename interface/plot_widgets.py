@@ -758,6 +758,7 @@ class BasePlotWidget(QWidget):
         self._phase_display_buffer = None
         self._last_axis_render_key = None
         self._cached_levels = None
+        self._cached_levels_data_identity = None
         self._last_levels_update_time = 0.0
         self._levels_update_interval_s = 0.5
         self._last_geometry_key = None
@@ -884,11 +885,11 @@ class BasePlotWidget(QWidget):
     def _levels_for_display(self, data):
         if self._manual_levels_enabled and self._manual_levels is not None:
             return self._manual_levels
-        if self.data_key == "phase":
-            return (-180.0, 180.0)
         now = time.monotonic()
+        data_identity = (id(data), data.shape)
         if (
             self._cached_levels is not None
+            and self._cached_levels_data_identity == data_identity
             and now - self._last_levels_update_time < self._levels_update_interval_s
         ):
             return self._cached_levels
@@ -906,6 +907,7 @@ class BasePlotWidget(QWidget):
             self._cached_levels = (min_value - 0.5, max_value + 0.5)
         else:
             self._cached_levels = (min_value, max_value)
+        self._cached_levels_data_identity = data_identity
         self._last_levels_update_time = now
         return self._cached_levels
 
@@ -920,13 +922,33 @@ class BasePlotWidget(QWidget):
         finally:
             self._setting_hist_levels = False
 
+    def _set_image_with_levels(self, data, levels):
+        normalized_levels = (float(levels[0]), float(levels[1]))
+        self._last_applied_levels = normalized_levels
+        self._setting_hist_levels = True
+        try:
+            self.image_item.setImage(
+                data,
+                autoLevels=False,
+                levels=normalized_levels,
+            )
+            self.hist_item.setLevels(*normalized_levels)
+        finally:
+            self._setting_hist_levels = False
+
     def _on_hist_levels_changed(self, *_args):
         if self._setting_hist_levels:
             return
         levels = self.hist_item.getLevels()
         if levels is None:
             return
-        self._manual_levels = (float(levels[0]), float(levels[1]))
+        normalized_levels = (float(levels[0]), float(levels[1]))
+        if (
+            not self._manual_levels_enabled
+            and self._last_applied_levels == normalized_levels
+        ):
+            return
+        self._manual_levels = normalized_levels
         self._manual_levels_enabled = True
         self._last_applied_levels = self._manual_levels
 
@@ -934,16 +956,12 @@ class BasePlotWidget(QWidget):
         self._manual_levels_enabled = False
         self._manual_levels = None
         self._cached_levels = None
+        self._cached_levels_data_identity = None
         self._last_applied_levels = None
         self._last_levels_update_time = 0.0
         if self.display_data is not None:
             levels = self._levels_for_display(self.display_data)
-            self._apply_hist_levels(levels)
-            self.image_item.setImage(
-                self.display_data,
-                autoLevels=False,
-                levels=levels,
-            )
+            self._set_image_with_levels(self.display_data, levels)
 
     @staticmethod
     def _axis_identity(value):
@@ -1171,8 +1189,7 @@ class BasePlotWidget(QWidget):
             self.display_late_mask = late_mask
 
         levels = self._levels_for_display(data)
-        self.image_item.setImage(data, autoLevels=False, levels=levels)
-        self._apply_hist_levels(levels)
+        self._set_image_with_levels(data, levels)
 
         if geometry_changed:
             x_edges = self._axis_edges(self.x_axis)
