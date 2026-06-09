@@ -14,10 +14,16 @@ from infrastructure.measurement.qt_measure_thread import MeasureThread
 
 
 class FakeVna:
+    def __init__(self):
+        self.powers = []
+
     def __getattr__(self, name):
         if name.startswith("set_") or name == "set_parameter":
             return lambda *args, **kwargs: None
         raise AttributeError(name)
+
+    def set_power(self, value):
+        self.powers.append(float(value))
 
     @staticmethod
     def get_data():
@@ -87,6 +93,28 @@ def build_config():
 
 
 class MeasurementThreadMultiFrequencyTest(unittest.TestCase):
+    def test_configured_vna_power_is_applied(self):
+        runtime = FakeRuntime()
+        config = build_config()
+        config = MeasurementConfig(
+            x_range=config.x_range,
+            y_range=config.y_range,
+            z_range=config.z_range,
+            rotation_range=config.rotation_range,
+            vna=VnaConfig(-17.5, 0.0, 1.0, 2, 1000, 1, False),
+            generator_1=config.generator_1,
+            generator_2=config.generator_2,
+            sweep=config.sweep,
+            movement=config.movement,
+            center_calibration=config.center_calibration,
+            plot_update_hz=config.plot_update_hz,
+        )
+        thread = MeasureThread(config=config, runtime=runtime)
+
+        thread.run()
+
+        self.assertEqual(runtime.vna.powers, [-17.5])
+
     def test_all_frequency_blocks_are_stored_including_last(self):
         runtime = FakeRuntime()
         thread = MeasureThread(config=build_config(), runtime=runtime)

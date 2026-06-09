@@ -163,6 +163,12 @@ class MeasureWidget(QGroupBox):
         self.vna_points = QSpinBox(self)
         self.vna_points.setRange(1, 5000)
         self.vna_points.setValue(State.measure_vna_points)
+        self.vna_power = DoubleSpinBox(self)
+        self.vna_power.setRange(-100, 20)
+        self.vna_power.setDecimals(1)
+        self.vna_power.setValue(State.measure_vna_power)
+        self.vna_power.setToolTip("VNA output power for all measurement points, dBm")
+        self.vna_power.valueChanged.connect(self.on_vna_power_changed)
         self.vna_start_time = DoubleSpinBox(self)
         self.vna_start_time.setRange(0, 1e6)
         self.vna_start_time.setDecimals(6)
@@ -346,6 +352,7 @@ class MeasureWidget(QGroupBox):
         )
 
         f_layout.addRow("VNA points", self.vna_points)
+        f_layout.addRow("VNA power, dBm", self.vna_power)
         f_layout.addRow("VNA start time, s", self.vna_start_time)
         f_layout.addRow("VNA stop time, s", self.vna_stop_time)
         f_layout.addRow("VNA bandwidth, Hz", self.vna_bandwidth)
@@ -432,6 +439,10 @@ class MeasureWidget(QGroupBox):
     def on_plot_max_pixels_changed(value):
         State.plot_max_pixels = int(value)
 
+    @staticmethod
+    def on_vna_power_changed(value):
+        State.measure_vna_power = float(value)
+
     def _build_measurement_config(self) -> MeasurementConfig:
         return MeasurementConfig(
             x_range=build_axis_range(
@@ -459,7 +470,7 @@ class MeasureWidget(QGroupBox):
                 enabled=self.rotation_check.isChecked(),
             ),
             vna=VnaConfig(
-                power=-30,
+                power=self.vna_power.value(),
                 start_time=self.vna_start_time.value(),
                 stop_time=self.vna_stop_time.value(),
                 points=self.vna_points.value(),
@@ -572,6 +583,7 @@ class MeasureWidget(QGroupBox):
         State.auto_adjust_z_fly_speed = self.auto_adjust_z_fly_speed_check.isChecked()
         State.use_rotation_sweep = self.rotation_check.isChecked()
         State.measure_vna_points = self.vna_points.value()
+        State.measure_vna_power = self.vna_power.value()
         State.measure_vna_start_time = self.vna_start_time.value()
         State.measure_vna_stop_time = self.vna_stop_time.value()
         State.measure_vna_bandwidth = self.vna_bandwidth.value()

@@ -388,9 +388,11 @@ class RotationMeasureWidget(QWidget):
         self.vna_bandwidth.setValue(State.measure_vna_bandwidth)
 
         self.vna_power = DoubleSpinBox(self)
-        self.vna_power.setRange(-120, 30)
+        self.vna_power.setRange(-100, 20)
         self.vna_power.setDecimals(1)
-        self.vna_power.setValue(-30)
+        self.vna_power.setValue(State.measure_vna_power)
+        self.vna_power.setToolTip("VNA output power for rotation measurement, dBm")
+        self.vna_power.valueChanged.connect(self.on_vna_power_changed)
 
         form_layout.addRow("Angle start, deg", self.angle_start)
         form_layout.addRow("Angle stop, deg", self.angle_stop)
@@ -497,6 +499,9 @@ class RotationMeasureWidget(QWidget):
         self.measure_thread.log.connect(self.set_log)
         self.measure_thread.finished.connect(self.on_finished)
 
+        State.measure_vna_power = self.vna_power.value()
+        State.store_state()
+
         self.status_label.setText("Running")
         self.progress_bar.setValue(0)
         self.btn_start.set_enabled(False, animate=True)
@@ -508,6 +513,10 @@ class RotationMeasureWidget(QWidget):
         self.delay_ms.setToolTip(
             "Settle pause after each angle in step mode; start pause before fly pass in fly mode."
         )
+
+    @staticmethod
+    def on_vna_power_changed(value):
+        State.measure_vna_power = float(value)
 
     def stop_measure(self):
         if self.measure_thread and self.measure_thread.isRunning():
