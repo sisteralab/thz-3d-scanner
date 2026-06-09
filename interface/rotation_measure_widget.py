@@ -6,6 +6,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QGridLayout,
     QLabel,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from api.vna import VNA_PARAMETER_OPTIONS, normalize_vna_parameter
 from interface.ui.Button import Button
 from interface.ui.DoubleSpinBox import DoubleSpinBox
 from store.state import State
@@ -36,6 +38,8 @@ class RotationMeasureThread(QThread):
         vna_points: int,
         vna_bandwidth: int,
         vna_power: float,
+        vna_parameter: str,
+        vna_output_enabled: bool,
         fly_mode: bool,
         fly_speed: float,
         fly_poll_delay_ms: int = 5,
@@ -46,6 +50,8 @@ class RotationMeasureThread(QThread):
         self.vna_points = int(vna_points)
         self.vna_bandwidth = int(vna_bandwidth)
         self.vna_power = float(vna_power)
+        self.vna_parameter = str(vna_parameter)
+        self.vna_output_enabled = bool(vna_output_enabled)
         self.fly_mode = bool(fly_mode)
         self.fly_speed = float(fly_speed)
         self.fly_poll_delay_ms = int(fly_poll_delay_ms)
@@ -57,9 +63,10 @@ class RotationMeasureThread(QThread):
         self._running = False
 
     def _configure_vna(self):
-        State.vna.set_parameter("BA")
+        State.vna.set_parameter(self.vna_parameter)
         State.vna.set_sweep(max(1, self.vna_points))
         State.vna.set_power(self.vna_power)
+        State.vna.set_output_state(self.vna_output_enabled)
         State.vna.set_channel_format("COMP")
         State.vna.set_average_count(1)
         State.vna.set_average_status(False)
@@ -381,6 +388,15 @@ class RotationMeasureWidget(QWidget):
         self.vna_points = QSpinBox(self)
         self.vna_points.setRange(1, 5000)
         self.vna_points.setValue(State.measure_vna_points)
+        self.vna_parameter = QComboBox(self)
+        for parameter in VNA_PARAMETER_OPTIONS:
+            self.vna_parameter.addItem(parameter, parameter)
+        current_parameter = normalize_vna_parameter(State.measure_vna_parameter)
+        self.vna_parameter.setCurrentIndex(
+            max(0, self.vna_parameter.findData(current_parameter))
+        )
+        self.vna_parameter.setToolTip("VNA measured quantity for rotation measurement")
+        self.vna_parameter.currentIndexChanged.connect(self.on_vna_parameter_changed)
 
         self.vna_bandwidth = QSpinBox(self)
         self.vna_bandwidth.setRange(1, 1_000_000)
@@ -393,6 +409,12 @@ class RotationMeasureWidget(QWidget):
         self.vna_power.setValue(State.measure_vna_power)
         self.vna_power.setToolTip("VNA output power for rotation measurement, dBm")
         self.vna_power.valueChanged.connect(self.on_vna_power_changed)
+        self.vna_output_enabled = QCheckBox(self)
+        self.vna_output_enabled.setChecked(State.measure_vna_output_enabled)
+        self.vna_output_enabled.setToolTip(
+            "Enable VNA RF output during rotation measurement"
+        )
+        self.vna_output_enabled.toggled.connect(self.on_vna_output_enabled_changed)
 
         form_layout.addRow("Angle start, deg", self.angle_start)
         form_layout.addRow("Angle stop, deg", self.angle_stop)
@@ -401,8 +423,10 @@ class RotationMeasureWidget(QWidget):
         form_layout.addRow(self.fly_mode)
         form_layout.addRow("Fly speed, deg/s", self.fly_speed)
         form_layout.addRow("VNA points", self.vna_points)
+        form_layout.addRow("VNA parameter", self.vna_parameter)
         form_layout.addRow("VNA bandwidth, Hz", self.vna_bandwidth)
         form_layout.addRow("VNA power, dBm", self.vna_power)
+        form_layout.addRow("VNA output enabled", self.vna_output_enabled)
 
         self.status_label = QLabel("Idle", self)
         self.progress_bar = QProgressBar(self)
@@ -490,6 +514,8 @@ class RotationMeasureWidget(QWidget):
             vna_points=self.vna_points.value(),
             vna_bandwidth=self.vna_bandwidth.value(),
             vna_power=self.vna_power.value(),
+            vna_parameter=str(self.vna_parameter.currentData()),
+            vna_output_enabled=self.vna_output_enabled.isChecked(),
             fly_mode=self.fly_mode.isChecked(),
             fly_speed=self.fly_speed.value(),
             fly_poll_delay_ms=5,
@@ -499,7 +525,9 @@ class RotationMeasureWidget(QWidget):
         self.measure_thread.log.connect(self.set_log)
         self.measure_thread.finished.connect(self.on_finished)
 
+        State.measure_vna_parameter = str(self.vna_parameter.currentData())
         State.measure_vna_power = self.vna_power.value()
+        State.measure_vna_output_enabled = self.vna_output_enabled.isChecked()
         State.store_state()
 
         self.status_label.setText("Running")
@@ -517,6 +545,13 @@ class RotationMeasureWidget(QWidget):
     @staticmethod
     def on_vna_power_changed(value):
         State.measure_vna_power = float(value)
+
+    @staticmethod
+    def on_vna_output_enabled_changed(value):
+        State.measure_vna_output_enabled = bool(value)
+
+    def on_vna_parameter_changed(self, _index):
+        State.measure_vna_parameter = str(self.vna_parameter.currentData())
 
     def stop_measure(self):
         if self.measure_thread and self.measure_thread.isRunning():

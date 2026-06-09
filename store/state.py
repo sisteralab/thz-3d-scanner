@@ -3,7 +3,7 @@ from typing import Optional
 
 from api.scannerdevice import ScannerDevice
 from api.signal_generator import SignalGenerator
-from api.vna import VNABlock
+from api.vna import DEFAULT_VNA_PARAMETER, VNABlock
 from utils.exceptions import DeviceConnectionError
 
 
@@ -75,6 +75,12 @@ class State:
 
     measure_vna_points: int = int(settings.value("Measure/vna_points", 100))
     measure_vna_power: float = float(settings.value("Measure/vna_power", -30.0))
+    measure_vna_parameter: str = str(
+        settings.value("Measure/vna_parameter", DEFAULT_VNA_PARAMETER)
+    )
+    measure_vna_output_enabled: bool = (
+        settings.value("Measure/vna_output_enabled", "true") == "true"
+    )
     measure_vna_start_time: float = float(settings.value("Measure/vna_start_time", 0.0))
     measure_vna_stop_time: float = float(settings.value("Measure/vna_stop_time", 0.1))
     measure_vna_bandwidth: int = int(settings.value("Measure/vna_bandwidth", 1000))
@@ -174,6 +180,11 @@ class State:
         cls.settings.setValue("Measure/rotation_step", cls.rotation_step)
         cls.settings.setValue("Measure/vna_points", cls.measure_vna_points)
         cls.settings.setValue("Measure/vna_power", cls.measure_vna_power)
+        cls.settings.setValue("Measure/vna_parameter", cls.measure_vna_parameter)
+        cls.settings.setValue(
+            "Measure/vna_output_enabled",
+            cls.measure_vna_output_enabled,
+        )
         cls.settings.setValue("Measure/vna_start_time", cls.measure_vna_start_time)
         cls.settings.setValue("Measure/vna_stop_time", cls.measure_vna_stop_time)
         cls.settings.setValue("Measure/vna_bandwidth", cls.measure_vna_bandwidth)

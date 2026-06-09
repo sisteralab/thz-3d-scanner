@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from api.vna import DEFAULT_VNA_PARAMETER
+
 
 @dataclass(frozen=True)
 class VnaConfig:
@@ -14,6 +16,8 @@ class VnaConfig:
     bandwidth: int
     average_count: int
     average_enabled: bool
+    parameter: str = DEFAULT_VNA_PARAMETER
+    output_enabled: bool = True
 
 
 @dataclass(frozen=True)

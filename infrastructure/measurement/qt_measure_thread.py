@@ -5,6 +5,7 @@ import time
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 
+from api.vna import normalize_vna_parameter
 from application.measurement.config import MeasurementConfig
 from application.measurement.planning import (
     build_measurement_plan,
@@ -48,6 +49,8 @@ class MeasureThread(QThread):
         self.z_range = np.asarray(config.z_range, dtype=np.float32)
         self.rotation_range = np.asarray(config.rotation_range, dtype=np.float32)
         self.vna_power = config.vna.power
+        self.vna_parameter = normalize_vna_parameter(config.vna.parameter)
+        self.vna_output_enabled = bool(config.vna.output_enabled)
         self.vna_start = config.vna.start_time
         self.vna_stop = config.vna.stop_time
         self.vna_points = config.vna.points
@@ -121,7 +124,7 @@ class MeasureThread(QThread):
         self.data.emit(preview_data)
 
     def _configure_vna(self):
-        self.runtime.vna.set_parameter("BA")
+        self.runtime.vna.set_parameter(self.vna_parameter)
         try:
             self.runtime.vna.set_start_time(self.vna_start)
             self.runtime.vna.set_stop_time(self.vna_stop)
@@ -134,6 +137,7 @@ class MeasureThread(QThread):
             )
         self.runtime.vna.set_sweep(max(1, int(self.vna_points)))
         self.runtime.vna.set_power(self.vna_power)
+        self.runtime.vna.set_output_state(self.vna_output_enabled)
         self.runtime.vna.set_channel_format("COMP")
         self.runtime.vna.set_average_count(max(1, int(self.vna_average_count)))
         self.runtime.vna.set_average_status(bool(self.vna_average_enabled))

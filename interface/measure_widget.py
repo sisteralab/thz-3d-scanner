@@ -14,9 +14,11 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
     QCheckBox,
+    QComboBox,
     QLineEdit,
 )
 
+from api.vna import VNA_PARAMETER_OPTIONS, normalize_vna_parameter
 from application.measurement.config import (
     CenterCalibrationConfig,
     GeneratorSweepConfig,
@@ -163,12 +165,25 @@ class MeasureWidget(QGroupBox):
         self.vna_points = QSpinBox(self)
         self.vna_points.setRange(1, 5000)
         self.vna_points.setValue(State.measure_vna_points)
+        self.vna_parameter = QComboBox(self)
+        for parameter in VNA_PARAMETER_OPTIONS:
+            self.vna_parameter.addItem(parameter, parameter)
+        current_parameter = normalize_vna_parameter(State.measure_vna_parameter)
+        self.vna_parameter.setCurrentIndex(
+            max(0, self.vna_parameter.findData(current_parameter))
+        )
+        self.vna_parameter.setToolTip("VNA measured quantity for all scan points")
+        self.vna_parameter.currentIndexChanged.connect(self.on_vna_parameter_changed)
         self.vna_power = DoubleSpinBox(self)
         self.vna_power.setRange(-100, 20)
         self.vna_power.setDecimals(1)
         self.vna_power.setValue(State.measure_vna_power)
         self.vna_power.setToolTip("VNA output power for all measurement points, dBm")
         self.vna_power.valueChanged.connect(self.on_vna_power_changed)
+        self.vna_output_enabled = QCheckBox(self)
+        self.vna_output_enabled.setChecked(State.measure_vna_output_enabled)
+        self.vna_output_enabled.setToolTip("Enable VNA RF output during measurement")
+        self.vna_output_enabled.toggled.connect(self.on_vna_output_enabled_changed)
         self.vna_start_time = DoubleSpinBox(self)
         self.vna_start_time.setRange(0, 1e6)
         self.vna_start_time.setDecimals(6)
@@ -352,7 +367,9 @@ class MeasureWidget(QGroupBox):
         )
 
         f_layout.addRow("VNA points", self.vna_points)
+        f_layout.addRow("VNA parameter", self.vna_parameter)
         f_layout.addRow("VNA power, dBm", self.vna_power)
+        f_layout.addRow("VNA output enabled", self.vna_output_enabled)
         f_layout.addRow("VNA start time, s", self.vna_start_time)
         f_layout.addRow("VNA stop time, s", self.vna_stop_time)
         f_layout.addRow("VNA bandwidth, Hz", self.vna_bandwidth)
@@ -443,6 +460,13 @@ class MeasureWidget(QGroupBox):
     def on_vna_power_changed(value):
         State.measure_vna_power = float(value)
 
+    @staticmethod
+    def on_vna_output_enabled_changed(value):
+        State.measure_vna_output_enabled = bool(value)
+
+    def on_vna_parameter_changed(self, _index):
+        State.measure_vna_parameter = str(self.vna_parameter.currentData())
+
     def _build_measurement_config(self) -> MeasurementConfig:
         return MeasurementConfig(
             x_range=build_axis_range(
@@ -477,6 +501,8 @@ class MeasureWidget(QGroupBox):
                 bandwidth=self.vna_bandwidth.value(),
                 average_count=self.vna_average_count.value(),
                 average_enabled=self.vna_average_enabled.isChecked(),
+                parameter=str(self.vna_parameter.currentData()),
+                output_enabled=self.vna_output_enabled.isChecked(),
             ),
             generator_1=GeneratorSweepConfig(
                 freq_start=self.generator_freq_start_1.value(),
@@ -583,7 +609,9 @@ class MeasureWidget(QGroupBox):
         State.auto_adjust_z_fly_speed = self.auto_adjust_z_fly_speed_check.isChecked()
         State.use_rotation_sweep = self.rotation_check.isChecked()
         State.measure_vna_points = self.vna_points.value()
+        State.measure_vna_parameter = str(self.vna_parameter.currentData())
         State.measure_vna_power = self.vna_power.value()
+        State.measure_vna_output_enabled = self.vna_output_enabled.isChecked()
         State.measure_vna_start_time = self.vna_start_time.value()
         State.measure_vna_stop_time = self.vna_stop_time.value()
         State.measure_vna_bandwidth = self.vna_bandwidth.value()

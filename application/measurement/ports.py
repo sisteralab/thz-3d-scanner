@@ -19,6 +19,9 @@ class VnaPort(Protocol):
     def set_power(self, value: float) -> None:
         ...
 
+    def set_output_state(self, enabled: bool) -> None:
+        ...
+
     def set_channel_format(self, value: str) -> None:
         ...
 

@@ -3,7 +3,6 @@ import time
 from typing import Dict
 
 import numpy as np
-from typing import Literal
 
 from api.adapters.socket_adapter import SocketAdapter
 from utils.classes import BaseInstrument
@@ -11,9 +10,33 @@ from utils.classes import BaseInstrument
 logger = logging.getLogger(__name__)
 
 
-VNA_PARAMETERS = Literal["AB", "BA"]
-VNA_SWEEP_TYPES = Literal["LIN", "LOG", "SEG", "POW", "CW"]
-VNA_CHANNEL_FORMATS = Literal["COMP"]
+DEFAULT_VNA_PARAMETER = "B2/B1"
+VNA_PORTS = range(1, 5)
+VNA_RATIO_PARAMETERS = tuple(
+    f"B{numerator_port}/A{denominator_port}"
+    for numerator_port in VNA_PORTS
+    for denominator_port in VNA_PORTS
+) + tuple(
+    f"B{numerator_port}/B{denominator_port}"
+    for numerator_port in VNA_PORTS
+    for denominator_port in VNA_PORTS
+    if numerator_port != denominator_port
+)
+VNA_MATRIX_PARAMETER_PREFIXES = ("S", "Z", "Y")
+VNA_MATRIX_PARAMETERS = tuple(
+    f"{prefix}{out_port}{in_port}"
+    for prefix in VNA_MATRIX_PARAMETER_PREFIXES
+    for out_port in VNA_PORTS
+    for in_port in VNA_PORTS
+)
+VNA_PARAMETER_OPTIONS = VNA_RATIO_PARAMETERS + VNA_MATRIX_PARAMETERS
+
+
+def normalize_vna_parameter(parameter: str) -> str:
+    normalized = str(parameter or DEFAULT_VNA_PARAMETER).strip().upper()
+    if normalized not in VNA_PARAMETER_OPTIONS:
+        return DEFAULT_VNA_PARAMETER
+    return normalized
 
 
 class VNABlock(BaseInstrument):
@@ -41,7 +64,7 @@ class VNABlock(BaseInstrument):
         result = self.idn()
         return "Rohde&Schwarz,ZVA67-4Port" in result
 
-    def set_sweep_type(self, sweep_type: VNA_SWEEP_TYPES = "CW"):
+    def set_sweep_type(self, sweep_type: str = "CW"):
         self.write(f"SWE:TYPE {sweep_type}")
 
     def get_sweep_type(self) -> str:
@@ -66,7 +89,7 @@ class VNABlock(BaseInstrument):
     def set_average_count(self, value: int, channel: int = 1) -> None:
         self.write(f"SENSe{channel}:AVERage:COUNt {value}")
 
-    def set_channel_format(self, form: VNA_CHANNEL_FORMATS = "COMP") -> None:
+    def set_channel_format(self, form: str = "COMP") -> None:
         self.write(f"CALC:FORM {form}")
 
     def get_channel_format(self):
@@ -77,6 +100,13 @@ class VNABlock(BaseInstrument):
 
     def get_power(self):
         return self.query("SOUR:POW?", delay=0.05)
+
+    def set_output_state(self, enabled: bool, channel: int = 1) -> None:
+        state = "ON" if enabled else "OFF"
+        self.write(f"OUTPut{channel}:STATe {state}")
+
+    def get_output_state(self, channel: int = 1) -> bool:
+        return bool(int(float(self.query(f"OUTPut{channel}:STATe?", delay=0.05))))
 
     def get_start_frequency(self) -> float:
         return float(self.query("SENS:FREQ:STAR?", delay=0.05))
@@ -97,9 +127,14 @@ class VNABlock(BaseInstrument):
         self.write(f"SENSe{channel}:SWEep:TIME:STOP {stime}")
 
     def set_parameter(
-        self, parameter: VNA_PARAMETERS = "BA", trace: str = "Trc1", channel: int = 1
+        self,
+        parameter: str = DEFAULT_VNA_PARAMETER,
+        trace: str = "Trc1",
+        channel: int = 1,
     ) -> None:
-        self.write(f"CALCulate{channel}:PARameter:DEFine {trace},{parameter}")
+        parameter = normalize_vna_parameter(parameter)
+        trace = str(trace).replace("'", "''")
+        self.write(f"CALCulate{channel}:PARameter:SDEFine '{trace}', '{parameter}'")
         # self.write("DISP:WIND2:STAT ON")
         # self.write(f"DISP:WIND2:TRAC1:FEED Trc1")
 
@@ -156,7 +191,7 @@ class VNABlock(BaseInstrument):
 
 if __name__ == "__main__":
     vna = VNABlock()
-    vna.set_parameter("BA")
+    vna.set_parameter(DEFAULT_VNA_PARAMETER)
     vna.set_sweep(100)
     vna.set_power(-90)
     vna.set_channel_format("COMP")
