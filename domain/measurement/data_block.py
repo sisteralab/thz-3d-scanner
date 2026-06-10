@@ -57,8 +57,8 @@ class MeasurementAxes:
 def create_measurement_block(
     *,
     axes: MeasurementAxes,
-    freq_1: float,
-    freq_2: float,
+    freq_1: float | None,
+    freq_2: float | None,
     amp_1: float | None,
     amp_2: float | None,
     vna_cw_frequency_hz: float | None = None,

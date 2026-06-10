@@ -246,6 +246,35 @@ class MeasurementThreadMultiFrequencyTest(unittest.TestCase):
             self.assertEqual(block["amplitude"].shape, (1, 1, 1))
             self.assertAlmostEqual(float(block["amplitude"][0, 0, 0]), 0.0)
 
+    def test_measurement_can_run_without_generators(self):
+        runtime = FakeRuntime()
+        runtime.generator_1 = None
+        runtime.generator_2 = None
+        base = build_config()
+        config = MeasurementConfig(
+            x_range=base.x_range,
+            y_range=base.y_range,
+            z_range=base.z_range,
+            rotation_range=base.rotation_range,
+            vna=base.vna,
+            generator_1=base.generator_1,
+            generator_2=base.generator_2,
+            sweep=base.sweep,
+            movement=base.movement,
+            center_calibration=base.center_calibration,
+            plot_update_hz=base.plot_update_hz,
+            use_generators=False,
+        )
+        thread = MeasureThread(config=config, runtime=runtime)
+
+        thread.run()
+
+        self.assertEqual(len(thread.measure.data), 1)
+        self.assertIsNone(thread.measure.data[0]["freq_1"])
+        self.assertIsNone(thread.measure.data[0]["freq_2"])
+        self.assertIsNone(thread.measure.data[0]["amp_1"])
+        self.assertIsNone(thread.measure.data[0]["amp_2"])
+
     def test_final_signal_is_emitted_after_measure_is_finished(self):
         thread = MeasureThread(config=build_config(), runtime=FakeRuntime())
         finished_values = []

@@ -53,6 +53,7 @@ class State:
         settings.value("Measure/generator_freq_points_2", 1)
     )
     generator_amps_2: str = str(settings.value("Measure/generator_amps_2", ""))
+    use_generators: bool = settings.value("Measure/use_generators", "true") == "true"
 
     use_x_sweep: bool = settings.value("Measure/use_x_sweep", "true") == "true"
     use_y_sweep: bool = settings.value("Measure/use_y_sweep", "true") == "true"
@@ -177,6 +178,7 @@ class State:
     @classmethod
     def store_state(cls):
         cls.settings.setValue("Measure/use_x_sweep", cls.use_x_sweep)
+        cls.settings.setValue("Measure/use_generators", cls.use_generators)
         cls.settings.setValue("Measure/use_y_sweep", cls.use_y_sweep)
         cls.settings.setValue("Measure/use_z_sweep", cls.use_z_sweep)
         cls.settings.setValue("Measure/use_z_snake_pattern", cls.use_z_snake_pattern)

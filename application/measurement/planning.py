@@ -33,8 +33,10 @@ class MotionProfiles:
 
 
 def build_measurement_plan(config: MeasurementConfig) -> MeasurementPlan:
-    freq_points = int(
-        np.min([config.generator_1.freq_points, config.generator_2.freq_points])
+    freq_points = (
+        int(np.min([config.generator_1.freq_points, config.generator_2.freq_points]))
+        if config.use_generators
+        else 1
     )
     vna_cw_points = (
         max(1, int(config.vna.cw_frequency_points))
@@ -118,7 +120,10 @@ def estimate_measurement_seconds(
     )
 
     rotation_s = _rotation_time_per_frequency_block_s(config, motion)
-    setup_s = 0.3 * plan.freq_points * plan.vna_cw_points + _vna_cw_setup_time_s(config)
+    generator_setup_s = (
+        0.3 * plan.freq_points * plan.vna_cw_points if config.use_generators else 0.0
+    )
+    setup_s = generator_setup_s + _vna_cw_setup_time_s(config)
     return max(
         0.0, multiplier * (rotation_s + plan.rotation_points * per_angle_s) + setup_s
     )

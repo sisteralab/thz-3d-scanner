@@ -1,4 +1,5 @@
 import unittest
+import json
 
 import numpy as np
 
@@ -54,6 +55,26 @@ class MeasurementDomainTest(unittest.TestCase):
         self.assertEqual(plan.base_steps_per_angle, 24)
         self.assertEqual(plan.calibration_steps_per_angle, 4)
         self.assertEqual(plan.total_steps, 56)
+
+    def test_measurement_plan_uses_single_frequency_block_without_generators(self):
+        config = self._config()
+        config = MeasurementConfig(
+            x_range=config.x_range,
+            y_range=config.y_range,
+            z_range=config.z_range,
+            rotation_range=config.rotation_range,
+            vna=config.vna,
+            generator_1=config.generator_1,
+            generator_2=config.generator_2,
+            sweep=config.sweep,
+            movement=config.movement,
+            center_calibration=config.center_calibration,
+            plot_update_hz=config.plot_update_hz,
+            use_generators=False,
+        )
+        plan = build_measurement_plan(config)
+        self.assertEqual(plan.freq_points, 1)
+        self.assertEqual(plan.total_steps, 24)
 
     def test_motion_time_uses_trapezoid_profile(self):
         profile = AxisMotionProfile(speed=10.0, accel=10.0, decel=10.0)
@@ -188,6 +209,32 @@ class MeasurementDomainTest(unittest.TestCase):
         )
         payload = model.to_json()
         self.assertIsInstance(payload["data"][0]["amplitude"], list)
+
+    def test_measure_model_serializes_blocks_without_generators(self):
+        axes = MeasurementAxes(
+            x=np.array([0.0], dtype=np.float32),
+            y=np.array([0.0], dtype=np.float32),
+            z=np.array([0.0], dtype=np.float32),
+        )
+        block = create_measurement_block(
+            axes=axes,
+            freq_1=None,
+            freq_2=None,
+            amp_1=None,
+            amp_2=None,
+            vna_cw_frequency_hz=1.5e9,
+            rotation_angle=0.0,
+            center_calibration={"enabled": False},
+        )
+        payload = MeasureModel(data=[block]).to_json()
+        restored = json.loads(json.dumps(payload))
+
+        self.assertIsNone(restored["data"][0]["freq_1"])
+        self.assertIsNone(restored["data"][0]["freq_2"])
+        self.assertIsNone(restored["data"][0]["amp_1"])
+        self.assertIsNone(restored["data"][0]["amp_2"])
+        self.assertEqual(restored["data"][0]["vna_cw_frequency_hz"], 1.5e9)
+        self.assertIsInstance(restored["data"][0]["amplitude"], list)
 
     def test_complex_sample_dto_from_vna_arrays(self):
         sample = build_complex_sample(

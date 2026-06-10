@@ -299,6 +299,14 @@ class MeasureWidget(QGroupBox):
             self.update_approx_time
         )
 
+        self.use_generators_check = QCheckBox(self)
+        self.use_generators_check.setChecked(State.use_generators)
+        self.use_generators_check.setToolTip(
+            "Use external signal generators during measurement"
+        )
+        self.use_generators_check.toggled.connect(self._set_generator_controls_enabled)
+        self.use_generators_check.toggled.connect(self.update_approx_time)
+
         self.generator_freq_start_1 = DoubleSpinBox(self)
         self.generator_freq_start_1.setRange(1, 1000)
         self.generator_freq_start_1.setDecimals(5)
@@ -435,6 +443,7 @@ class MeasureWidget(QGroupBox):
 
         f_layout.addRow(HLine(self))
 
+        f_layout.addRow("Use generators", self.use_generators_check)
         f_layout.addRow("Generator start 1, GHz", self.generator_freq_start_1)
         f_layout.addRow("Generator stop 1, GHz", self.generator_freq_stop_1)
         f_layout.addRow("Generator points 1", self.generator_freq_points_1)
@@ -478,6 +487,7 @@ class MeasureWidget(QGroupBox):
         self._set_vna_cw_frequency_controls_enabled(
             self.vna_cw_frequency_enabled.isChecked()
         )
+        self._set_generator_controls_enabled(self.use_generators_check.isChecked())
         self.update_approx_time()
 
     def on_z_fly_toggled(self, enabled):
@@ -530,6 +540,19 @@ class MeasureWidget(QGroupBox):
 
     def on_vna_parameter_changed(self, _index):
         State.measure_vna_parameter = str(self.vna_parameter.currentData())
+
+    def _set_generator_controls_enabled(self, enabled):
+        for widget in (
+            self.generator_freq_start_1,
+            self.generator_freq_stop_1,
+            self.generator_freq_points_1,
+            self.generator_amps_1,
+            self.generator_freq_start_2,
+            self.generator_freq_stop_2,
+            self.generator_freq_points_2,
+            self.generator_amps_2,
+        ):
+            widget.setEnabled(enabled)
 
     def _build_measurement_config(self) -> MeasurementConfig:
         return MeasurementConfig(
@@ -612,6 +635,7 @@ class MeasureWidget(QGroupBox):
                 period_lines=self.center_calibration_period_lines.value(),
             ),
             plot_update_hz=self.plot_update_hz.value(),
+            use_generators=self.use_generators_check.isChecked(),
         )
 
     def start_measure(self):
@@ -632,7 +656,17 @@ class MeasureWidget(QGroupBox):
                 "Rotation sweep is enabled, but rotation axis is not initialized!"
             )
             return
-        if self.generator_freq_points_2.value() != self.generator_freq_points_1.value():
+        if self.use_generators_check.isChecked() and not State.generator_1:
+            logger.warning("Generator 1 is not initialized!")
+            return
+        if self.use_generators_check.isChecked() and not State.generator_2:
+            logger.warning("Generator 2 is not initialized!")
+            return
+        if (
+            self.use_generators_check.isChecked()
+            and self.generator_freq_points_2.value()
+            != self.generator_freq_points_1.value()
+        ):
             logger.warning("Frequency points must be equal!")
             return
         if self.vna_stop_time.value() <= self.vna_start_time.value():
@@ -667,6 +701,7 @@ class MeasureWidget(QGroupBox):
         State.generator_freq_stop_2 = self.generator_freq_stop_2.value()
         State.generator_freq_points_2 = self.generator_freq_points_2.value()
         State.generator_amps_2 = self.generator_amps_2.text()
+        State.use_generators = self.use_generators_check.isChecked()
 
         State.use_x_sweep = self.x_check.isChecked()
         State.use_y_sweep = self.y_check.isChecked()

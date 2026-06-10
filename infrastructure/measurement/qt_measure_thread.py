@@ -66,6 +66,7 @@ class MeasureThread(QThread):
         self.generator_freq_stop_2 = config.generator_2.freq_stop
         self.generator_freq_points_2 = config.generator_2.freq_points
         self.generator_amps_2 = config.generator_2.amplitudes
+        self.use_generators = bool(config.use_generators)
         self.vna_bandwidth = config.vna.bandwidth
         self.vna_average_count = config.vna.average_count
         self.vna_average_enabled = config.vna.average_enabled
@@ -101,6 +102,18 @@ class MeasureThread(QThread):
 
         self.measure = MeasureModel.objects.create(data=[])
         self.measure.save(False)
+
+    @staticmethod
+    def _format_frequency(freq_ghz):
+        if freq_ghz is None:
+            return "off"
+        return f"{float(freq_ghz):.5f}GHz"
+
+    @staticmethod
+    def _optional_float(value):
+        if value is None:
+            return None
+        return float(value)
 
     @classmethod
     def from_config(
@@ -340,7 +353,8 @@ class MeasureThread(QThread):
             {
                 "type": "info",
                 "msg": (
-                    f"freq1 {freq_1:.5f}GHz; freq2 {freq_2:.5f}GHz; "
+                    f"freq1 {self._format_frequency(freq_1)}; "
+                    f"freq2 {self._format_frequency(freq_2)}; "
                     f"pow {sample.amplitude_db:.5f} dB; "
                     f"phase {sample.phase_rad:.2f}"
                 ),
@@ -499,8 +513,8 @@ class MeasureThread(QThread):
             "x_moved": bool(self.use_x_sweep),
             "y_moved": bool(self.use_y_sweep),
             "z_moved": bool(self.use_z_sweep),
-            "freq_1": float(freq_1),
-            "freq_2": float(freq_2),
+            "freq_1": self._optional_float(freq_1),
+            "freq_2": self._optional_float(freq_2),
             "vna_cw_frequency_hz": full_data.get("vna_cw_frequency_hz"),
             "amp_1": full_data.get("amp_1"),
             "amp_2": full_data.get("amp_2"),
@@ -802,14 +816,18 @@ class MeasureThread(QThread):
 
             plan = build_measurement_plan(self.config)
             freq_points = plan.freq_points
-            self.generator_amps_1 = normalize_amplitudes(
-                self.generator_amps_1,
-                freq_points,
-            )
-            self.generator_amps_2 = normalize_amplitudes(
-                self.generator_amps_2,
-                freq_points,
-            )
+            if self.use_generators:
+                self.generator_amps_1 = normalize_amplitudes(
+                    self.generator_amps_1,
+                    freq_points,
+                )
+                self.generator_amps_2 = normalize_amplitudes(
+                    self.generator_amps_2,
+                    freq_points,
+                )
+            else:
+                self.generator_amps_1 = [None]
+                self.generator_amps_2 = [None]
 
             self._total_steps = plan.total_steps
             self._step_counter = 0
@@ -822,12 +840,16 @@ class MeasureThread(QThread):
 
             use_z_snake = self.use_z_snake_pattern and not self.use_z_fly_mode
 
-            freq_range_1 = np.linspace(
-                self.generator_freq_start_1, self.generator_freq_stop_1, freq_points
-            )
-            freq_range_2 = np.linspace(
-                self.generator_freq_start_2, self.generator_freq_stop_2, freq_points
-            )
+            if self.use_generators:
+                freq_range_1 = np.linspace(
+                    self.generator_freq_start_1, self.generator_freq_stop_1, freq_points
+                )
+                freq_range_2 = np.linspace(
+                    self.generator_freq_start_2, self.generator_freq_stop_2, freq_points
+                )
+            else:
+                freq_range_1 = [None]
+                freq_range_2 = [None]
             vna_cw_range_hz = self._vna_cw_frequency_range_hz()
             stop_requested = False
             for vna_cw_frequency_hz in vna_cw_range_hz:
@@ -852,18 +874,21 @@ class MeasureThread(QThread):
                     if not self.runtime.is_measure_running():
                         stop_requested = True
                         break
-                    if amp_1 is not None:
-                        self.runtime.generator_1.set_power(-100)
-                    self.runtime.generator_1.set_frequency(freq_1 * 1e9)
-                    if amp_1 is not None:
-                        self.runtime.generator_1.set_power(amp_1)
-                    if amp_2 is not None:
-                        self.runtime.generator_2.set_power(-100)
-                    self.runtime.generator_2.set_frequency(freq_2 * 1e9)
-                    if amp_2 is not None:
-                        self.runtime.generator_2.set_power(amp_2)
+                    if self.use_generators:
+                        if amp_1 is not None:
+                            self.runtime.generator_1.set_power(-100)
+                        self.runtime.generator_1.set_frequency(freq_1 * 1e9)
+                        if amp_1 is not None:
+                            self.runtime.generator_1.set_power(amp_1)
+                        if amp_2 is not None:
+                            self.runtime.generator_2.set_power(-100)
+                        self.runtime.generator_2.set_frequency(freq_2 * 1e9)
+                        if amp_2 is not None:
+                            self.runtime.generator_2.set_power(amp_2)
 
-                    time.sleep(0.3)  # Allow generators to stabilize before measurement.
+                        time.sleep(
+                            0.3
+                        )  # Allow generators to stabilize before measurement.
 
                     for rotation_angle in self.rotation_range:
                         if not self.runtime.is_measure_running():

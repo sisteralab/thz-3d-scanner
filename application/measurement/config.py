@@ -75,6 +75,7 @@ class MeasurementConfig:
     movement: MovementTimingConfig
     center_calibration: CenterCalibrationConfig
     plot_update_hz: float
+    use_generators: bool = True
 
 
 def parse_amplitudes(raw_value: str) -> tuple[float, ...]:
