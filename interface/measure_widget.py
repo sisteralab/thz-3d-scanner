@@ -3,7 +3,6 @@ import logging
 import numpy as np
 from PySide6.QtGui import Qt
 from PySide6.QtWidgets import (
-    QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -11,7 +10,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QProgressBar,
-    QSpinBox,
     QVBoxLayout,
     QCheckBox,
     QComboBox,
@@ -29,13 +27,19 @@ from application.measurement.config import (
     build_axis_range,
     parse_amplitudes,
 )
-from application.measurement.planning import build_measurement_plan
+from application.measurement.planning import (
+    AxisMotionProfile,
+    MotionProfiles,
+    build_measurement_plan,
+    estimate_measurement_seconds,
+)
 from infrastructure.measurement.qt_measure_thread import MeasureThread
 from interface.ui.Button import Button
 from interface.ui.DoubleSpinBox import DoubleSpinBox
 from interface.ui.Lines import HLine
+from interface.ui.SpinBox import SpinBox
 from store.state import State
-from utils.functions import steps_to_time
+from utils.functions import convert_seconds
 
 
 logger = logging.getLogger(__name__)
@@ -56,20 +60,23 @@ class MeasureWidget(QGroupBox):
 
         self.x_check = QCheckBox("X", self)
         self.x_check.setChecked(State.use_x_sweep)
+        self.x_check.toggled.connect(self.update_approx_time)
         self.x_start = DoubleSpinBox(self)
         self.x_start.setRange(-1000, 1000)
         self.x_start.setValue(State.x_start)
         self.x_start.valueChanged.connect(self.update_x_step)
+        self.x_start.valueChanged.connect(self.update_approx_time)
         self.x_stop = DoubleSpinBox(self)
         self.x_stop.setRange(-1000, 1000)
         self.x_stop.setValue(State.x_stop)
         self.x_stop.valueChanged.connect(self.update_x_step)
-        self.x_points = QSpinBox(self)
+        self.x_stop.valueChanged.connect(self.update_approx_time)
+        self.x_points = SpinBox(self)
         self.x_points.setRange(1, 5000)
         self.x_points.setValue(State.x_points)
         self.x_points.valueChanged.connect(self.update_x_step)
         self.x_points.valueChanged.connect(self.update_approx_time)
-        self.x_step = QDoubleSpinBox(self)
+        self.x_step = DoubleSpinBox(self)
         self.x_step.setRange(0.02, 100)
         self.x_step.setSingleStep(0.0125)
         self.x_step.setValue(State.x_step)
@@ -77,20 +84,23 @@ class MeasureWidget(QGroupBox):
 
         self.y_check = QCheckBox("Y", self)
         self.y_check.setChecked(State.use_y_sweep)
+        self.y_check.toggled.connect(self.update_approx_time)
         self.y_start = DoubleSpinBox(self)
         self.y_start.setRange(-1000, 1000)
         self.y_start.setValue(State.y_start)
         self.y_start.valueChanged.connect(self.update_y_step)
+        self.y_start.valueChanged.connect(self.update_approx_time)
         self.y_stop = DoubleSpinBox(self)
         self.y_stop.setRange(-1000, 1000)
         self.y_stop.setValue(State.y_stop)
         self.y_stop.valueChanged.connect(self.update_y_step)
-        self.y_points = QSpinBox(self)
+        self.y_stop.valueChanged.connect(self.update_approx_time)
+        self.y_points = SpinBox(self)
         self.y_points.setRange(1, 5000)
         self.y_points.setValue(State.y_points)
         self.y_points.valueChanged.connect(self.update_y_step)
         self.y_points.valueChanged.connect(self.update_approx_time)
-        self.y_step = QDoubleSpinBox(self)
+        self.y_step = DoubleSpinBox(self)
         self.y_step.setRange(0.02, 100)
         self.y_step.setSingleStep(0.0125)
         self.y_step.setValue(State.y_step)
@@ -98,20 +108,23 @@ class MeasureWidget(QGroupBox):
 
         self.z_check = QCheckBox("Z", self)
         self.z_check.setChecked(State.use_z_sweep)
+        self.z_check.toggled.connect(self.update_approx_time)
         self.z_start = DoubleSpinBox(self)
         self.z_start.setRange(-1000, 1000)
         self.z_start.setValue(State.z_start)
         self.z_start.valueChanged.connect(self.update_z_step)
+        self.z_start.valueChanged.connect(self.update_approx_time)
         self.z_stop = DoubleSpinBox(self)
         self.z_stop.setRange(-1000, 1000)
         self.z_stop.setValue(State.z_stop)
         self.z_stop.valueChanged.connect(self.update_z_step)
-        self.z_points = QSpinBox(self)
+        self.z_stop.valueChanged.connect(self.update_approx_time)
+        self.z_points = SpinBox(self)
         self.z_points.setRange(1, 5000)
         self.z_points.setValue(State.z_points)
         self.z_points.valueChanged.connect(self.update_z_step)
         self.z_points.valueChanged.connect(self.update_approx_time)
-        self.z_step = QDoubleSpinBox(self)
+        self.z_step = DoubleSpinBox(self)
         self.z_step.setRange(0.02, 100)
         self.z_step.setSingleStep(0.0125)
         self.z_step.setValue(State.z_step)
@@ -125,17 +138,19 @@ class MeasureWidget(QGroupBox):
         self.rotation_start.setDecimals(3)
         self.rotation_start.setValue(State.rotation_start)
         self.rotation_start.valueChanged.connect(self.update_rotation_step)
+        self.rotation_start.valueChanged.connect(self.update_approx_time)
         self.rotation_stop = DoubleSpinBox(self)
         self.rotation_stop.setRange(-36000, 36000)
         self.rotation_stop.setDecimals(3)
         self.rotation_stop.setValue(State.rotation_stop)
         self.rotation_stop.valueChanged.connect(self.update_rotation_step)
-        self.rotation_points = QSpinBox(self)
+        self.rotation_stop.valueChanged.connect(self.update_approx_time)
+        self.rotation_points = SpinBox(self)
         self.rotation_points.setRange(1, 10000)
         self.rotation_points.setValue(State.rotation_points)
         self.rotation_points.valueChanged.connect(self.update_rotation_step)
         self.rotation_points.valueChanged.connect(self.update_approx_time)
-        self.rotation_step = QDoubleSpinBox(self)
+        self.rotation_step = DoubleSpinBox(self)
         self.rotation_step.setRange(0.001, 36000)
         self.rotation_step.setDecimals(3)
         self.rotation_step.setValue(State.rotation_step)
@@ -146,6 +161,7 @@ class MeasureWidget(QGroupBox):
         self.z_snake_check.setToolTip(
             "Enable snake pattern for Z-axis movement to reduce travel time"
         )
+        self.z_snake_check.toggled.connect(self.update_approx_time)
         self.z_fly_check = QCheckBox("Z Fly", self)
         self.z_fly_check.setChecked(State.use_z_fly_mode)
         self.z_fly_check.setToolTip(
@@ -157,14 +173,17 @@ class MeasureWidget(QGroupBox):
         self.auto_adjust_z_fly_speed_check.setToolTip(
             "Limit Z Fly speed automatically using measured VNA latency"
         )
+        self.auto_adjust_z_fly_speed_check.toggled.connect(self.update_approx_time)
         self.z_fly_speed = DoubleSpinBox(self)
         self.z_fly_speed.setRange(0.01, 1000)
         self.z_fly_speed.setDecimals(4)
         self.z_fly_speed.setValue(State.z_fly_speed)
+        self.z_fly_speed.valueChanged.connect(self.update_approx_time)
 
-        self.vna_points = QSpinBox(self)
+        self.vna_points = SpinBox(self)
         self.vna_points.setRange(1, 5000)
         self.vna_points.setValue(State.measure_vna_points)
+        self.vna_points.valueChanged.connect(self.update_approx_time)
         self.vna_parameter = QComboBox(self)
         for parameter in VNA_PARAMETER_OPTIONS:
             self.vna_parameter.addItem(parameter, parameter)
@@ -184,36 +203,60 @@ class MeasureWidget(QGroupBox):
         self.vna_output_enabled.setChecked(State.measure_vna_output_enabled)
         self.vna_output_enabled.setToolTip("Enable VNA RF output during measurement")
         self.vna_output_enabled.toggled.connect(self.on_vna_output_enabled_changed)
+        self.vna_cw_frequency_enabled = QCheckBox(self)
+        self.vna_cw_frequency_enabled.setChecked(State.measure_vna_cw_frequency_enabled)
+        self.vna_cw_frequency_enabled.setToolTip(
+            "Sweep VNA CW frequency before each full scan block"
+        )
+        self.vna_cw_frequency_enabled.toggled.connect(
+            self.on_vna_cw_frequency_enabled_changed
+        )
+        self.vna_cw_frequency_start = DoubleSpinBox(self)
+        self.vna_cw_frequency_start.setRange(0.001, 1000)
+        self.vna_cw_frequency_start.setDecimals(6)
+        self.vna_cw_frequency_start.setValue(State.measure_vna_cw_frequency_start_ghz)
+        self.vna_cw_frequency_stop = DoubleSpinBox(self)
+        self.vna_cw_frequency_stop.setRange(0.001, 1000)
+        self.vna_cw_frequency_stop.setDecimals(6)
+        self.vna_cw_frequency_stop.setValue(State.measure_vna_cw_frequency_stop_ghz)
+        self.vna_cw_frequency_points = SpinBox(self)
+        self.vna_cw_frequency_points.setRange(1, 10000)
+        self.vna_cw_frequency_points.setValue(State.measure_vna_cw_frequency_points)
+        self.vna_cw_frequency_points.valueChanged.connect(self.update_approx_time)
         self.vna_start_time = DoubleSpinBox(self)
         self.vna_start_time.setRange(0, 1e6)
         self.vna_start_time.setDecimals(6)
         self.vna_start_time.setValue(State.measure_vna_start_time)
+        self.vna_start_time.valueChanged.connect(self.update_approx_time)
         self.vna_stop_time = DoubleSpinBox(self)
         self.vna_stop_time.setRange(0, 1e6)
         self.vna_stop_time.setDecimals(6)
         self.vna_stop_time.setValue(State.measure_vna_stop_time)
+        self.vna_stop_time.valueChanged.connect(self.update_approx_time)
 
-        self.vna_bandwidth = QSpinBox(self)
+        self.vna_bandwidth = SpinBox(self)
         self.vna_bandwidth.setRange(1, 1_000_000)
         self.vna_bandwidth.setSingleStep(100)
         self.vna_bandwidth.setValue(State.measure_vna_bandwidth)
 
         self.vna_average_enabled = QCheckBox(self)
         self.vna_average_enabled.setChecked(State.measure_vna_average_enabled)
-        self.vna_average_count = QSpinBox(self)
+        self.vna_average_count = SpinBox(self)
         self.vna_average_count.setRange(1, 1024)
         self.vna_average_count.setValue(State.measure_vna_average_count)
         self.vna_average_enabled.toggled.connect(self.vna_average_count.setEnabled)
+        self.vna_average_enabled.toggled.connect(self.update_approx_time)
+        self.vna_average_count.valueChanged.connect(self.update_approx_time)
         self.vna_average_count.setEnabled(self.vna_average_enabled.isChecked())
 
-        self.plot_update_hz = QDoubleSpinBox(self)
+        self.plot_update_hz = DoubleSpinBox(self)
         self.plot_update_hz.setRange(0.01, 60.0)
         self.plot_update_hz.setDecimals(2)
         self.plot_update_hz.setSingleStep(0.25)
         self.plot_update_hz.setValue(State.plot_update_hz)
         self.plot_update_hz.setToolTip("How often live amplitude/phase images update")
         self.plot_update_hz.valueChanged.connect(self.on_plot_update_hz_changed)
-        self.plot_max_pixels = QSpinBox(self)
+        self.plot_max_pixels = SpinBox(self)
         self.plot_max_pixels.setRange(0, 20_000_000)
         self.plot_max_pixels.setSingleStep(100_000)
         self.plot_max_pixels.setSpecialValueText("Full resolution")
@@ -244,7 +287,7 @@ class MeasureWidget(QGroupBox):
         self.center_calibration_z.setRange(-1000, 1000)
         self.center_calibration_z.setDecimals(4)
         self.center_calibration_z.setValue(State.center_calibration_z)
-        self.center_calibration_period_lines = QSpinBox(self)
+        self.center_calibration_period_lines = SpinBox(self)
         self.center_calibration_period_lines.setRange(1, 1_000_000)
         self.center_calibration_period_lines.setValue(
             max(1, State.center_calibration_period_lines)
@@ -266,7 +309,7 @@ class MeasureWidget(QGroupBox):
         self.generator_freq_stop_1.setDecimals(5)
         self.generator_freq_stop_1.setValue(State.generator_freq_stop_1)
 
-        self.generator_freq_points_1 = QSpinBox(self)
+        self.generator_freq_points_1 = SpinBox(self)
         self.generator_freq_points_1.setRange(1, 10000)
         self.generator_freq_points_1.setValue(State.generator_freq_points_1)
         self.generator_freq_points_1.valueChanged.connect(self.update_approx_time)
@@ -284,7 +327,7 @@ class MeasureWidget(QGroupBox):
         self.generator_freq_stop_2.setDecimals(5)
         self.generator_freq_stop_2.setValue(State.generator_freq_stop_2)
 
-        self.generator_freq_points_2 = QSpinBox(self)
+        self.generator_freq_points_2 = SpinBox(self)
         self.generator_freq_points_2.setRange(1, 10000)
         self.generator_freq_points_2.setValue(State.generator_freq_points_2)
         self.generator_freq_points_2.valueChanged.connect(self.update_approx_time)
@@ -370,6 +413,10 @@ class MeasureWidget(QGroupBox):
         f_layout.addRow("VNA parameter", self.vna_parameter)
         f_layout.addRow("VNA power, dBm", self.vna_power)
         f_layout.addRow("VNA output enabled", self.vna_output_enabled)
+        f_layout.addRow("VNA CW sweep", self.vna_cw_frequency_enabled)
+        f_layout.addRow("VNA CW start, GHz", self.vna_cw_frequency_start)
+        f_layout.addRow("VNA CW stop, GHz", self.vna_cw_frequency_stop)
+        f_layout.addRow("VNA CW points", self.vna_cw_frequency_points)
         f_layout.addRow("VNA start time, s", self.vna_start_time)
         f_layout.addRow("VNA stop time, s", self.vna_stop_time)
         f_layout.addRow("VNA bandwidth, Hz", self.vna_bandwidth)
@@ -428,6 +475,9 @@ class MeasureWidget(QGroupBox):
         self._set_center_calibration_controls_enabled(
             self.center_calibration_enabled.isChecked()
         )
+        self._set_vna_cw_frequency_controls_enabled(
+            self.vna_cw_frequency_enabled.isChecked()
+        )
         self.update_approx_time()
 
     def on_z_fly_toggled(self, enabled):
@@ -438,6 +488,7 @@ class MeasureWidget(QGroupBox):
             self.z_snake_check.setEnabled(False)
         else:
             self.z_snake_check.setEnabled(True)
+        self.update_approx_time()
 
     def _set_center_calibration_controls_enabled(self, enabled):
         for widget in (
@@ -463,6 +514,19 @@ class MeasureWidget(QGroupBox):
     @staticmethod
     def on_vna_output_enabled_changed(value):
         State.measure_vna_output_enabled = bool(value)
+
+    def on_vna_cw_frequency_enabled_changed(self, value):
+        State.measure_vna_cw_frequency_enabled = bool(value)
+        self._set_vna_cw_frequency_controls_enabled(bool(value))
+        self.update_approx_time()
+
+    def _set_vna_cw_frequency_controls_enabled(self, enabled):
+        for widget in (
+            self.vna_cw_frequency_start,
+            self.vna_cw_frequency_stop,
+            self.vna_cw_frequency_points,
+        ):
+            widget.setEnabled(enabled)
 
     def on_vna_parameter_changed(self, _index):
         State.measure_vna_parameter = str(self.vna_parameter.currentData())
@@ -503,6 +567,10 @@ class MeasureWidget(QGroupBox):
                 average_enabled=self.vna_average_enabled.isChecked(),
                 parameter=str(self.vna_parameter.currentData()),
                 output_enabled=self.vna_output_enabled.isChecked(),
+                cw_frequency_enabled=self.vna_cw_frequency_enabled.isChecked(),
+                cw_frequency_start_ghz=self.vna_cw_frequency_start.value(),
+                cw_frequency_stop_ghz=self.vna_cw_frequency_stop.value(),
+                cw_frequency_points=self.vna_cw_frequency_points.value(),
             ),
             generator_1=GeneratorSweepConfig(
                 freq_start=self.generator_freq_start_1.value(),
@@ -612,6 +680,12 @@ class MeasureWidget(QGroupBox):
         State.measure_vna_parameter = str(self.vna_parameter.currentData())
         State.measure_vna_power = self.vna_power.value()
         State.measure_vna_output_enabled = self.vna_output_enabled.isChecked()
+        State.measure_vna_cw_frequency_enabled = (
+            self.vna_cw_frequency_enabled.isChecked()
+        )
+        State.measure_vna_cw_frequency_start_ghz = self.vna_cw_frequency_start.value()
+        State.measure_vna_cw_frequency_stop_ghz = self.vna_cw_frequency_stop.value()
+        State.measure_vna_cw_frequency_points = self.vna_cw_frequency_points.value()
         State.measure_vna_start_time = self.vna_start_time.value()
         State.measure_vna_stop_time = self.vna_stop_time.value()
         State.measure_vna_bandwidth = self.vna_bandwidth.value()
@@ -763,8 +837,37 @@ class MeasureWidget(QGroupBox):
         self.rotation_points.valueChanged.connect(self.update_rotation_step)
 
     def update_approx_time(self):
-        plan = build_measurement_plan(self._build_measurement_config())
-        self.approx_time.setText(f"Approx time ~ {steps_to_time(plan.total_steps)}")
+        config = self._build_measurement_config()
+        plan = build_measurement_plan(config)
+        seconds = estimate_measurement_seconds(config, self._motion_profiles())
+        self.approx_time.setText(
+            f"Approx time ~ {convert_seconds(int(round(seconds)))} ({plan.total_steps} points)"
+        )
+
+    @staticmethod
+    def _motion_profiles() -> MotionProfiles:
+        return MotionProfiles(
+            x=AxisMotionProfile(
+                State.scanner_x_speed,
+                State.scanner_x_accel,
+                State.scanner_x_decel,
+            ),
+            y=AxisMotionProfile(
+                State.scanner_y_speed,
+                State.scanner_y_accel,
+                State.scanner_y_decel,
+            ),
+            z=AxisMotionProfile(
+                State.scanner_z_speed,
+                State.scanner_z_accel,
+                State.scanner_z_decel,
+            ),
+            rotation=AxisMotionProfile(
+                State.scanner_rotation_speed,
+                State.scanner_rotation_accel,
+                State.scanner_rotation_decel,
+            ),
+        )
 
     @staticmethod
     def set_log(log: dict):

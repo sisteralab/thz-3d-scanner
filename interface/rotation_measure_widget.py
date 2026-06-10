@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QLabel,
     QProgressBar,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -19,6 +18,7 @@ from PySide6.QtWidgets import (
 from api.vna import VNA_PARAMETER_OPTIONS, normalize_vna_parameter
 from interface.ui.Button import Button
 from interface.ui.DoubleSpinBox import DoubleSpinBox
+from interface.ui.SpinBox import SpinBox
 from store.state import State
 
 
@@ -365,11 +365,11 @@ class RotationMeasureWidget(QWidget):
         self.angle_stop.setDecimals(3)
         self.angle_stop.setValue(360)
 
-        self.angle_points = QSpinBox(self)
+        self.angle_points = SpinBox(self)
         self.angle_points.setRange(1, 10000)
         self.angle_points.setValue(37)
 
-        self.delay_ms = QSpinBox(self)
+        self.delay_ms = SpinBox(self)
         self.delay_ms.setRange(0, 600000)
         self.delay_ms.setValue(200)
 
@@ -385,7 +385,7 @@ class RotationMeasureWidget(QWidget):
         self.fly_speed.setDecimals(4)
         self.fly_speed.setValue(10)
 
-        self.vna_points = QSpinBox(self)
+        self.vna_points = SpinBox(self)
         self.vna_points.setRange(1, 5000)
         self.vna_points.setValue(State.measure_vna_points)
         self.vna_parameter = QComboBox(self)
@@ -398,7 +398,7 @@ class RotationMeasureWidget(QWidget):
         self.vna_parameter.setToolTip("VNA measured quantity for rotation measurement")
         self.vna_parameter.currentIndexChanged.connect(self.on_vna_parameter_changed)
 
-        self.vna_bandwidth = QSpinBox(self)
+        self.vna_bandwidth = SpinBox(self)
         self.vna_bandwidth.setRange(1, 1_000_000)
         self.vna_bandwidth.setSingleStep(100)
         self.vna_bandwidth.setValue(State.measure_vna_bandwidth)

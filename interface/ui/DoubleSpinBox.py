@@ -2,8 +2,10 @@ from PySide6 import QtGui
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDoubleSpinBox
 
+from interface.ui.safe_wheel import SafeWheelMixin
 
-class DoubleSpinBox(QDoubleSpinBox):
+
+class DoubleSpinBox(SafeWheelMixin, QDoubleSpinBox):
     def __init__(self, parent, btn_return_method=None):
         super().__init__(parent)
         self.btn_return_method = btn_return_method

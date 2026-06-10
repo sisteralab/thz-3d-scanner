@@ -3,6 +3,7 @@ from PySide6.QtCore import QThread, Signal
 from typing import Optional
 
 from interface.ui.Button import Button
+from interface.ui.SpinBox import SpinBox
 from store.state import State
 
 
@@ -37,19 +38,19 @@ class InitGeneratorWidget(QtWidgets.QGroupBox):
         if self.config.id == 1:
             self.host = QtWidgets.QLineEdit(self)
             self.host.setText(State.generator_1_host)
-            self.port = QtWidgets.QSpinBox(self)
+            self.port = SpinBox(self)
             self.port.setRange(1, 500000)
             self.port.setValue(State.generator_1_port)
-            self.gpib = QtWidgets.QSpinBox(self)
+            self.gpib = SpinBox(self)
             self.gpib.setRange(1, 32)
             self.gpib.setValue(State.generator_1_gpib)
         else:  # config.id == 2
             self.host = QtWidgets.QLineEdit(self)
             self.host.setText(State.generator_2_host)
-            self.port = QtWidgets.QSpinBox(self)
+            self.port = SpinBox(self)
             self.port.setRange(1, 500000)
             self.port.setValue(State.generator_2_port)
-            self.gpib = QtWidgets.QSpinBox(self)
+            self.gpib = SpinBox(self)
             self.gpib.setRange(1, 32)
             self.gpib.setValue(State.generator_2_gpib)
 

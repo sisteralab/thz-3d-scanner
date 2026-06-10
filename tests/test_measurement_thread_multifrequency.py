@@ -19,6 +19,7 @@ class FakeVna:
         self.powers = []
         self.parameters = []
         self.output_states = []
+        self.cw_frequencies = []
 
     def __getattr__(self, name):
         if name.startswith("set_") or name == "set_parameter":
@@ -33,6 +34,9 @@ class FakeVna:
 
     def set_output_state(self, value):
         self.output_states.append(bool(value))
+
+    def set_cw_frequency(self, value):
+        self.cw_frequencies.append(float(value))
 
     @staticmethod
     def get_data():
@@ -171,6 +175,47 @@ class MeasurementThreadMultiFrequencyTest(unittest.TestCase):
         thread.run()
 
         self.assertEqual(runtime.vna.output_states, [False])
+
+    def test_vna_cw_frequency_sweep_creates_blocks_and_sets_frequency(self):
+        runtime = FakeRuntime()
+        config = build_config()
+        config = MeasurementConfig(
+            x_range=config.x_range,
+            y_range=config.y_range,
+            z_range=config.z_range,
+            rotation_range=config.rotation_range,
+            vna=VnaConfig(
+                -30.0,
+                0.0,
+                1.0,
+                2,
+                1000,
+                1,
+                False,
+                "B2/A1",
+                True,
+                True,
+                1.0,
+                1.5,
+                2,
+            ),
+            generator_1=GeneratorSweepConfig(1.0, 1.0, 1, ()),
+            generator_2=GeneratorSweepConfig(10.0, 10.0, 1, ()),
+            sweep=config.sweep,
+            movement=config.movement,
+            center_calibration=config.center_calibration,
+            plot_update_hz=config.plot_update_hz,
+        )
+        thread = MeasureThread(config=config, runtime=runtime)
+
+        thread.run()
+
+        self.assertEqual(runtime.vna.cw_frequencies, [1.0e9, 1.5e9])
+        self.assertEqual(len(thread.measure.data), 2)
+        self.assertEqual(
+            [block["vna_cw_frequency_hz"] for block in thread.measure.data],
+            [1.0e9, 1.5e9],
+        )
 
     def test_all_frequency_blocks_are_stored_including_last(self):
         runtime = FakeRuntime()

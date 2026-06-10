@@ -61,6 +61,7 @@ def create_measurement_block(
     freq_2: float,
     amp_1: float | None,
     amp_2: float | None,
+    vna_cw_frequency_hz: float | None = None,
     rotation_angle: float,
     center_calibration: dict[str, Any],
 ) -> dict[str, Any]:
@@ -70,6 +71,7 @@ def create_measurement_block(
         "amp_1": amp_1,
         "freq_2": freq_2,
         "amp_2": amp_2,
+        "vna_cw_frequency_hz": vna_cw_frequency_hz,
         "rotation_angle": float(rotation_angle),
         "x": axes.x.copy(),
         "y": axes.y.copy(),
@@ -94,6 +96,7 @@ def create_preview_view(block: dict[str, Any]) -> dict[str, Any]:
         "amp_1": block["amp_1"],
         "freq_2": block["freq_2"],
         "amp_2": block["amp_2"],
+        "vna_cw_frequency_hz": block.get("vna_cw_frequency_hz"),
         "rotation_angle": block["rotation_angle"],
         "has_late_samples": block.get("has_late_samples", False),
         "x": block["x"],

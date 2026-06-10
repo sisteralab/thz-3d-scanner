@@ -10,13 +10,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from api.vna import VNABlock
-
+from interface.ui.SpinBox import SpinBox
 
 SCAN_DURATION_S = 3600.0
 DEFAULT_DISPLAY_POINTS = 2000
@@ -110,7 +109,7 @@ class TimeScanWindow(QWidget):
 
         display_layout = QHBoxLayout()
         latest_count_label = QLabel("Latest count:")
-        self.display_points_spin = QSpinBox()
+        self.display_points_spin = SpinBox()
         self.display_points_spin.setRange(1, 1_000_000)
         self.display_points_spin.setValue(DEFAULT_DISPLAY_POINTS)
         self.display_points_spin.setSingleStep(100)
@@ -118,13 +117,13 @@ class TimeScanWindow(QWidget):
             "Only this many latest points are drawn. All measured points are still saved."
         )
         from_label = QLabel("From point:")
-        self.display_from_spin = QSpinBox()
+        self.display_from_spin = SpinBox()
         self.display_from_spin.setRange(1, 1_000_000)
         self.display_from_spin.setValue(1)
         self.display_from_spin.setToolTip("First point index to draw, starting from 1.")
 
         to_label = QLabel("To point:")
-        self.display_to_spin = QSpinBox()
+        self.display_to_spin = SpinBox()
         self.display_to_spin.setRange(0, 1_000_000)
         self.display_to_spin.setSpecialValueText("latest")
         self.display_to_spin.setValue(0)

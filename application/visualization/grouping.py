@@ -17,6 +17,7 @@ def group_rotation_blocks_by_frequency(data: Any) -> list[list[dict[str, Any]]]:
             item.get("freq_2"),
             item.get("amp_1"),
             item.get("amp_2"),
+            item.get("vna_cw_frequency_hz"),
         )
         groups.setdefault(key, []).append(item)
 

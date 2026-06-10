@@ -81,6 +81,18 @@ class State:
     measure_vna_output_enabled: bool = (
         settings.value("Measure/vna_output_enabled", "true") == "true"
     )
+    measure_vna_cw_frequency_enabled: bool = (
+        settings.value("Measure/vna_cw_frequency_enabled", "false") == "true"
+    )
+    measure_vna_cw_frequency_start_ghz: float = float(
+        settings.value("Measure/vna_cw_frequency_start_ghz", 1.0)
+    )
+    measure_vna_cw_frequency_stop_ghz: float = float(
+        settings.value("Measure/vna_cw_frequency_stop_ghz", 1.0)
+    )
+    measure_vna_cw_frequency_points: int = int(
+        settings.value("Measure/vna_cw_frequency_points", 1)
+    )
     measure_vna_start_time: float = float(settings.value("Measure/vna_start_time", 0.0))
     measure_vna_stop_time: float = float(settings.value("Measure/vna_stop_time", 0.1))
     measure_vna_bandwidth: int = int(settings.value("Measure/vna_bandwidth", 1000))
@@ -184,6 +196,22 @@ class State:
         cls.settings.setValue(
             "Measure/vna_output_enabled",
             cls.measure_vna_output_enabled,
+        )
+        cls.settings.setValue(
+            "Measure/vna_cw_frequency_enabled",
+            cls.measure_vna_cw_frequency_enabled,
+        )
+        cls.settings.setValue(
+            "Measure/vna_cw_frequency_start_ghz",
+            cls.measure_vna_cw_frequency_start_ghz,
+        )
+        cls.settings.setValue(
+            "Measure/vna_cw_frequency_stop_ghz",
+            cls.measure_vna_cw_frequency_stop_ghz,
+        )
+        cls.settings.setValue(
+            "Measure/vna_cw_frequency_points",
+            cls.measure_vna_cw_frequency_points,
         )
         cls.settings.setValue("Measure/vna_start_time", cls.measure_vna_start_time)
         cls.settings.setValue("Measure/vna_stop_time", cls.measure_vna_stop_time)

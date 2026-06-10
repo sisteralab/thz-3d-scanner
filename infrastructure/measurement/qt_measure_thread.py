@@ -51,6 +51,10 @@ class MeasureThread(QThread):
         self.vna_power = config.vna.power
         self.vna_parameter = normalize_vna_parameter(config.vna.parameter)
         self.vna_output_enabled = bool(config.vna.output_enabled)
+        self.vna_cw_frequency_enabled = bool(config.vna.cw_frequency_enabled)
+        self.vna_cw_frequency_start_ghz = float(config.vna.cw_frequency_start_ghz)
+        self.vna_cw_frequency_stop_ghz = float(config.vna.cw_frequency_stop_ghz)
+        self.vna_cw_frequency_points = max(1, int(config.vna.cw_frequency_points))
         self.vna_start = config.vna.start_time
         self.vna_stop = config.vna.stop_time
         self.vna_points = config.vna.points
@@ -142,6 +146,18 @@ class MeasureThread(QThread):
         self.runtime.vna.set_average_count(max(1, int(self.vna_average_count)))
         self.runtime.vna.set_average_status(bool(self.vna_average_enabled))
         self.runtime.vna.set_bandwidth(max(1, int(self.vna_bandwidth)))
+
+    def _vna_cw_frequency_range_hz(self):
+        if not self.vna_cw_frequency_enabled:
+            return [None]
+        return [
+            float(value) * 1e9
+            for value in np.linspace(
+                self.vna_cw_frequency_start_ghz,
+                self.vna_cw_frequency_stop_ghz,
+                self.vna_cw_frequency_points,
+            )
+        ]
 
     @staticmethod
     def _smooth_move_profile(profile, ramp_time_s: float, min_accel: float = 1.0):
@@ -485,6 +501,7 @@ class MeasureThread(QThread):
             "z_moved": bool(self.use_z_sweep),
             "freq_1": float(freq_1),
             "freq_2": float(freq_2),
+            "vna_cw_frequency_hz": full_data.get("vna_cw_frequency_hz"),
             "amp_1": full_data.get("amp_1"),
             "amp_2": full_data.get("amp_2"),
             "rotation_angle": float(rotation_angle),
@@ -811,256 +828,282 @@ class MeasureThread(QThread):
             freq_range_2 = np.linspace(
                 self.generator_freq_start_2, self.generator_freq_stop_2, freq_points
             )
+            vna_cw_range_hz = self._vna_cw_frequency_range_hz()
             stop_requested = False
-            for freq_1, amp_1, freq_2, amp_2 in zip(
-                freq_range_1, self.generator_amps_1, freq_range_2, self.generator_amps_2
-            ):
-                if amp_1 is not None:
-                    self.runtime.generator_1.set_power(-100)
-                self.runtime.generator_1.set_frequency(freq_1 * 1e9)
-                if amp_1 is not None:
-                    self.runtime.generator_1.set_power(amp_1)
-                if amp_2 is not None:
-                    self.runtime.generator_2.set_power(-100)
-                self.runtime.generator_2.set_frequency(freq_2 * 1e9)
-                if amp_2 is not None:
-                    self.runtime.generator_2.set_power(amp_2)
-
-                time.sleep(0.3)  # Allow generators to stabilize before measurement.
-
-                for rotation_angle in self.rotation_range:
+            for vna_cw_frequency_hz in vna_cw_range_hz:
+                if vna_cw_frequency_hz is not None:
+                    self.runtime.vna.set_cw_frequency(vna_cw_frequency_hz)
+                    self.log.emit(
+                        {
+                            "type": "info",
+                            "msg": (
+                                "VNA CW frequency "
+                                f"{vna_cw_frequency_hz / 1e9:.6f} GHz"
+                            ),
+                        }
+                    )
+                    time.sleep(0.1)
+                for freq_1, amp_1, freq_2, amp_2 in zip(
+                    freq_range_1,
+                    self.generator_amps_1,
+                    freq_range_2,
+                    self.generator_amps_2,
+                ):
                     if not self.runtime.is_measure_running():
                         stop_requested = True
                         break
-                    if self.use_rotation_sweep:
-                        current_angle = self.runtime.scanner.get_position(
-                            self.runtime.scanner.id_rotation,
-                            self.runtime.scanner.rotation_unit,
-                        )
+                    if amp_1 is not None:
+                        self.runtime.generator_1.set_power(-100)
+                    self.runtime.generator_1.set_frequency(freq_1 * 1e9)
+                    if amp_1 is not None:
+                        self.runtime.generator_1.set_power(amp_1)
+                    if amp_2 is not None:
+                        self.runtime.generator_2.set_power(-100)
+                    self.runtime.generator_2.set_frequency(freq_2 * 1e9)
+                    if amp_2 is not None:
+                        self.runtime.generator_2.set_power(amp_2)
+
+                    time.sleep(0.3)  # Allow generators to stabilize before measurement.
+
+                    for rotation_angle in self.rotation_range:
                         if not self.runtime.is_measure_running():
                             stop_requested = True
                             break
-                        self.runtime.scanner.move_rotation(
-                            float(rotation_angle),
-                            timeout_s=self._rotation_move_timeout_s(
-                                current_angle,
-                                rotation_angle,
+                        if self.use_rotation_sweep:
+                            current_angle = self.runtime.scanner.get_position(
+                                self.runtime.scanner.id_rotation,
+                                self.runtime.scanner.rotation_unit,
+                            )
+                            if not self.runtime.is_measure_running():
+                                stop_requested = True
+                                break
+                            self.runtime.scanner.move_rotation(
+                                float(rotation_angle),
+                                timeout_s=self._rotation_move_timeout_s(
+                                    current_angle,
+                                    rotation_angle,
+                                ),
+                            )
+                            if not self.runtime.is_measure_running():
+                                stop_requested = True
+                                break
+                            self.msleep(self.no_movement_delay)
+                        if not self.runtime.is_measure_running():
+                            stop_requested = True
+                            break
+
+                        full_data = create_measurement_block(
+                            axes=MeasurementAxes(
+                                x=np.asarray(self.x_range, dtype=np.float32),
+                                y=np.asarray(self.y_range, dtype=np.float32),
+                                z=np.asarray(self.z_range, dtype=np.float32),
                             ),
+                            freq_1=freq_1,
+                            freq_2=freq_2,
+                            amp_1=amp_1,
+                            amp_2=amp_2,
+                            vna_cw_frequency_hz=vna_cw_frequency_hz,
+                            rotation_angle=float(rotation_angle),
+                            center_calibration={
+                                "enabled": self._calibration_enabled(),
+                                "period_lines": self.center_calibration_period_lines,
+                                "target_x": self.center_calibration_x,
+                                "target_y": self.center_calibration_y,
+                                "target_z": self.center_calibration_z,
+                                "reference_complex_real": None,
+                                "reference_complex_imag": None,
+                                "reference_amplitude": None,
+                                "reference_phase": None,
+                            },
                         )
-                        if not self.runtime.is_measure_running():
-                            stop_requested = True
-                            break
-                        self.msleep(self.no_movement_delay)
-                        if not self.runtime.is_measure_running():
-                            stop_requested = True
-                            break
-
-                    full_data = create_measurement_block(
-                        axes=MeasurementAxes(
-                            x=np.asarray(self.x_range, dtype=np.float32),
-                            y=np.asarray(self.y_range, dtype=np.float32),
-                            z=np.asarray(self.z_range, dtype=np.float32),
-                        ),
-                        freq_1=freq_1,
-                        freq_2=freq_2,
-                        amp_1=amp_1,
-                        amp_2=amp_2,
-                        rotation_angle=float(rotation_angle),
-                        center_calibration={
-                            "enabled": self._calibration_enabled(),
-                            "period_lines": self.center_calibration_period_lines,
-                            "target_x": self.center_calibration_x,
-                            "target_y": self.center_calibration_y,
-                            "target_z": self.center_calibration_z,
-                            "reference_complex_real": None,
-                            "reference_complex_imag": None,
-                            "reference_amplitude": None,
-                            "reference_phase": None,
-                        },
-                    )
-                    preview_data = create_preview_view(full_data)
-                    self.measure.data.append(full_data)
-                    angle_has_data = False
-                    angle_line_count = 0
-                    last_completed_step_y = None
-                    last_completed_step_x = None
-                    previous_calibration = None
-                    if self._calibration_enabled():
-                        previous_calibration = self._capture_center_calibration(
-                            full_data,
-                            0,
-                            None,
-                            None,
-                            freq_1,
-                            freq_2,
-                            rotation_angle,
-                        )
-                        if previous_calibration is None:
-                            stop_requested = True
-                        else:
-                            angle_has_data = True
-                    if stop_requested:
-                        break
-
-                    for step_y, y in enumerate(self.y_range):
-                        if not self.runtime.is_measure_running():
-                            stop_requested = True
-                            break
-                        if self.use_y_sweep:
-                            self.runtime.scanner.move_y(y)
-                            if not self.runtime.is_measure_running():
+                        preview_data = create_preview_view(full_data)
+                        self.measure.data.append(full_data)
+                        angle_has_data = False
+                        angle_line_count = 0
+                        last_completed_step_y = None
+                        last_completed_step_x = None
+                        previous_calibration = None
+                        if self._calibration_enabled():
+                            previous_calibration = self._capture_center_calibration(
+                                full_data,
+                                0,
+                                None,
+                                None,
+                                freq_1,
+                                freq_2,
+                                rotation_angle,
+                            )
+                            if previous_calibration is None:
                                 stop_requested = True
-                                break
-                            self.msleep(self.y_movement_delay)
-                        if not self.runtime.is_measure_running():
-                            stop_requested = True
-                            break
-                        for step_x, x in enumerate(self.x_range):
-                            if not self.runtime.is_measure_running():
-                                stop_requested = True
-                                break
-                            if self.use_x_sweep:
-                                self.runtime.scanner.move_x(x)
-                                if not self.runtime.is_measure_running():
-                                    stop_requested = True
-                                    break
-                                self.msleep(self.x_movement_delay)
-                            if not self.runtime.is_measure_running():
-                                stop_requested = True
-                                break
-
-                            line_completed = False
-                            if self.use_z_fly_mode and self.use_z_sweep:
-                                captured = self._scan_z_fly(
-                                    full_data,
-                                    preview_data,
-                                    step_y,
-                                    step_x,
-                                    freq_1,
-                                    freq_2,
-                                )
-                                if captured > 0:
-                                    angle_has_data = True
-                                if not self.runtime.is_measure_running():
-                                    stop_requested = True
-                                    break
-                                line_completed = True
                             else:
-                                if use_z_snake:
-                                    # Alternate Z direction for each X row in step mode.
-                                    if step_x % 2 == 0:
-                                        z_indices = range(len(self.z_range))
-                                    else:
-                                        z_indices = reversed(range(len(self.z_range)))
-                                else:
-                                    z_indices = range(len(self.z_range))
+                                angle_has_data = True
+                        if stop_requested:
+                            break
 
-                                for z_idx in z_indices:
+                        for step_y, y in enumerate(self.y_range):
+                            if not self.runtime.is_measure_running():
+                                stop_requested = True
+                                break
+                            if self.use_y_sweep:
+                                self.runtime.scanner.move_y(y)
+                                if not self.runtime.is_measure_running():
+                                    stop_requested = True
+                                    break
+                                self.msleep(self.y_movement_delay)
+                            if not self.runtime.is_measure_running():
+                                stop_requested = True
+                                break
+                            for step_x, x in enumerate(self.x_range):
+                                if not self.runtime.is_measure_running():
+                                    stop_requested = True
+                                    break
+                                if self.use_x_sweep:
+                                    self.runtime.scanner.move_x(x)
                                     if not self.runtime.is_measure_running():
                                         stop_requested = True
                                         break
-                                    z = self.z_range[z_idx]
-                                    if self.use_z_sweep:
-                                        self.runtime.scanner.move_z(z)
-                                        if not self.runtime.is_measure_running():
-                                            stop_requested = True
-                                            break
-                                        self.msleep(self.z_movement_delay)
-                                    else:
-                                        self.msleep(self.no_movement_delay)
-                                    if not self.runtime.is_measure_running():
-                                        stop_requested = True
-                                        break
+                                    self.msleep(self.x_movement_delay)
+                                if not self.runtime.is_measure_running():
+                                    stop_requested = True
+                                    break
 
-                                    if self._capture_point(
+                                line_completed = False
+                                if self.use_z_fly_mode and self.use_z_sweep:
+                                    captured = self._scan_z_fly(
                                         full_data,
                                         preview_data,
                                         step_y,
                                         step_x,
-                                        z_idx,
-                                        z,
                                         freq_1,
                                         freq_2,
-                                    ):
+                                    )
+                                    if captured > 0:
                                         angle_has_data = True
                                     if not self.runtime.is_measure_running():
                                         stop_requested = True
                                         break
-                                if stop_requested:
-                                    break
-                                line_completed = True
+                                    line_completed = True
+                                else:
+                                    if use_z_snake:
+                                        # Alternate Z direction for each X row in step mode.
+                                        if step_x % 2 == 0:
+                                            z_indices = range(len(self.z_range))
+                                        else:
+                                            z_indices = reversed(
+                                                range(len(self.z_range))
+                                            )
+                                    else:
+                                        z_indices = range(len(self.z_range))
 
-                            if line_completed:
-                                angle_line_count += 1
-                                last_completed_step_y = step_y
-                                last_completed_step_x = step_x
-                                self._emit_preview_data(preview_data)
-                                if (
-                                    self._calibration_enabled()
-                                    and angle_line_count
-                                    % self.center_calibration_period_lines
-                                    == 0
-                                ):
-                                    current_calibration = (
-                                        self._capture_center_calibration(
+                                    for z_idx in z_indices:
+                                        if not self.runtime.is_measure_running():
+                                            stop_requested = True
+                                            break
+                                        z = self.z_range[z_idx]
+                                        if self.use_z_sweep:
+                                            self.runtime.scanner.move_z(z)
+                                            if not self.runtime.is_measure_running():
+                                                stop_requested = True
+                                                break
+                                            self.msleep(self.z_movement_delay)
+                                        else:
+                                            self.msleep(self.no_movement_delay)
+                                        if not self.runtime.is_measure_running():
+                                            stop_requested = True
+                                            break
+
+                                        if self._capture_point(
                                             full_data,
-                                            angle_line_count,
+                                            preview_data,
                                             step_y,
                                             step_x,
+                                            z_idx,
+                                            z,
                                             freq_1,
                                             freq_2,
-                                            rotation_angle,
-                                        )
-                                    )
-                                    if current_calibration is not None:
-                                        self._apply_center_calibration_interval(
-                                            full_data,
-                                            previous_calibration,
-                                            current_calibration,
-                                        )
-                                        previous_calibration = current_calibration
-                                        self._emit_preview_data(
-                                            preview_data,
-                                            force=True,
-                                        )
-                                        angle_has_data = True
-                                    if not self.runtime.is_measure_running():
-                                        stop_requested = True
+                                        ):
+                                            angle_has_data = True
+                                        if not self.runtime.is_measure_running():
+                                            stop_requested = True
+                                            break
+                                    if stop_requested:
                                         break
+                                    line_completed = True
+
+                                if line_completed:
+                                    angle_line_count += 1
+                                    last_completed_step_y = step_y
+                                    last_completed_step_x = step_x
+                                    self._emit_preview_data(preview_data)
+                                    if (
+                                        self._calibration_enabled()
+                                        and angle_line_count
+                                        % self.center_calibration_period_lines
+                                        == 0
+                                    ):
+                                        current_calibration = (
+                                            self._capture_center_calibration(
+                                                full_data,
+                                                angle_line_count,
+                                                step_y,
+                                                step_x,
+                                                freq_1,
+                                                freq_2,
+                                                rotation_angle,
+                                            )
+                                        )
+                                        if current_calibration is not None:
+                                            self._apply_center_calibration_interval(
+                                                full_data,
+                                                previous_calibration,
+                                                current_calibration,
+                                            )
+                                            previous_calibration = current_calibration
+                                            self._emit_preview_data(
+                                                preview_data,
+                                                force=True,
+                                            )
+                                            angle_has_data = True
+                                        if not self.runtime.is_measure_running():
+                                            stop_requested = True
+                                            break
+                            if stop_requested:
+                                break
+
+                        if (
+                            self._calibration_enabled()
+                            and not stop_requested
+                            and previous_calibration is not None
+                            and last_completed_step_y is not None
+                            and int(previous_calibration["line_number"])
+                            < angle_line_count
+                        ):
+                            current_calibration = self._capture_center_calibration(
+                                full_data,
+                                angle_line_count,
+                                last_completed_step_y,
+                                last_completed_step_x,
+                                freq_1,
+                                freq_2,
+                                rotation_angle,
+                            )
+                            if current_calibration is not None:
+                                self._apply_center_calibration_interval(
+                                    full_data,
+                                    previous_calibration,
+                                    current_calibration,
+                                )
+                                self._emit_preview_data(preview_data, force=True)
+                                angle_has_data = True
+                            if not self.runtime.is_measure_running():
+                                stop_requested = True
+
+                        if angle_has_data:
+                            self._emit_preview_data(preview_data, force=True)
+                            if stop_requested:
+                                break
                         if stop_requested:
                             break
-
-                    if (
-                        self._calibration_enabled()
-                        and not stop_requested
-                        and previous_calibration is not None
-                        and last_completed_step_y is not None
-                        and int(previous_calibration["line_number"]) < angle_line_count
-                    ):
-                        current_calibration = self._capture_center_calibration(
-                            full_data,
-                            angle_line_count,
-                            last_completed_step_y,
-                            last_completed_step_x,
-                            freq_1,
-                            freq_2,
-                            rotation_angle,
-                        )
-                        if current_calibration is not None:
-                            self._apply_center_calibration_interval(
-                                full_data,
-                                previous_calibration,
-                                current_calibration,
-                            )
-                            self._emit_preview_data(preview_data, force=True)
-                            angle_has_data = True
-                        if not self.runtime.is_measure_running():
-                            stop_requested = True
-
-                    if angle_has_data:
-                        self._emit_preview_data(preview_data, force=True)
-                    if stop_requested:
-                        break
                 if stop_requested:
                     break
 

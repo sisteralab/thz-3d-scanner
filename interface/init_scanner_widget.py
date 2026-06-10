@@ -1,8 +1,8 @@
 from PySide6 import QtWidgets
-from PySide6.QtWidgets import QDoubleSpinBox
 from PySide6.QtCore import Qt
 
 from interface.ui.Button import Button
+from interface.ui.DoubleSpinBox import DoubleSpinBox
 from store.state import State
 
 
@@ -28,7 +28,7 @@ class InitScannerWidget(QtWidgets.QGroupBox):
         self.z_port.setText(State.scanner_z_port)
         self.rotation_port = QtWidgets.QLineEdit(self)
         self.rotation_port.setText(State.scanner_rotation_port)
-        self.rotation_degrees_per_step = QDoubleSpinBox(self)
+        self.rotation_degrees_per_step = DoubleSpinBox(self)
         self.rotation_degrees_per_step.setRange(0.000001, 360)
         self.rotation_degrees_per_step.setDecimals(6)
         self.rotation_degrees_per_step.setValue(State.scanner_rotation_degrees_per_step)
@@ -135,7 +135,7 @@ class InitScannerWidget(QtWidgets.QGroupBox):
         self.setLayout(layout)
 
     def _movement_spin_box(self, value, tooltip):
-        spin_box = QDoubleSpinBox(self)
+        spin_box = DoubleSpinBox(self)
         spin_box.setRange(0.000001, 1000000)
         spin_box.setDecimals(4)
         spin_box.setValue(value)
@@ -144,7 +144,7 @@ class InitScannerWidget(QtWidgets.QGroupBox):
         return spin_box
 
     def _scale_spin_box(self, value, tooltip):
-        spin_box = QDoubleSpinBox(self)
+        spin_box = DoubleSpinBox(self)
         spin_box.setRange(0.000000001, 1000000)
         spin_box.setDecimals(9)
         spin_box.setValue(value)

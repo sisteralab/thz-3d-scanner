@@ -2,6 +2,7 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import QThread, Signal
 
 from interface.ui.Button import Button
+from interface.ui.SpinBox import SpinBox
 from store.state import State
 
 
@@ -25,7 +26,7 @@ class InitVnaWidget(QtWidgets.QGroupBox):
 
         self.host = QtWidgets.QLineEdit(self)
         self.host.setText(State.vna_host)
-        self.port = QtWidgets.QSpinBox(self)
+        self.port = SpinBox(self)
         self.port.setRange(1, 500000)
         self.port.setValue(State.vna_port)
 

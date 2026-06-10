@@ -11,7 +11,11 @@ from application.measurement.config import (
     VnaConfig,
 )
 from application.measurement.planning import (
+    AxisMotionProfile,
+    MotionProfiles,
     build_measurement_plan,
+    estimate_measurement_seconds,
+    estimate_motion_time_s,
     normalize_amplitudes,
 )
 from domain.measurement.data_block import (
@@ -50,6 +54,99 @@ class MeasurementDomainTest(unittest.TestCase):
         self.assertEqual(plan.base_steps_per_angle, 24)
         self.assertEqual(plan.calibration_steps_per_angle, 4)
         self.assertEqual(plan.total_steps, 56)
+
+    def test_motion_time_uses_trapezoid_profile(self):
+        profile = AxisMotionProfile(speed=10.0, accel=10.0, decel=10.0)
+        self.assertAlmostEqual(estimate_motion_time_s(20.0, profile), 3.0)
+
+    def test_fly_estimate_uses_configured_speed(self):
+        slow = self._config()
+        fast = MeasurementConfig(
+            x_range=slow.x_range,
+            y_range=slow.y_range,
+            z_range=np.linspace(0.0, 10.0, 11, dtype=np.float32),
+            rotation_range=slow.rotation_range,
+            vna=slow.vna,
+            generator_1=slow.generator_1,
+            generator_2=slow.generator_2,
+            sweep=SweepModeConfig(True, True, True, False, True, 20.0, False, False),
+            movement=slow.movement,
+            center_calibration=slow.center_calibration,
+            plot_update_hz=slow.plot_update_hz,
+        )
+        slow = MeasurementConfig(
+            x_range=fast.x_range,
+            y_range=fast.y_range,
+            z_range=fast.z_range,
+            rotation_range=fast.rotation_range,
+            vna=VnaConfig(-30, 0.0, 0.01, 2, 1000, 1, False),
+            generator_1=fast.generator_1,
+            generator_2=fast.generator_2,
+            sweep=SweepModeConfig(True, True, True, False, True, 2.0, False, False),
+            movement=fast.movement,
+            center_calibration=fast.center_calibration,
+            plot_update_hz=fast.plot_update_hz,
+        )
+        fast = MeasurementConfig(
+            x_range=fast.x_range,
+            y_range=fast.y_range,
+            z_range=fast.z_range,
+            rotation_range=fast.rotation_range,
+            vna=slow.vna,
+            generator_1=fast.generator_1,
+            generator_2=fast.generator_2,
+            sweep=fast.sweep,
+            movement=fast.movement,
+            center_calibration=fast.center_calibration,
+            plot_update_hz=fast.plot_update_hz,
+        )
+
+        motion = MotionProfiles(
+            x=AxisMotionProfile(100.0, 100.0, 100.0),
+            y=AxisMotionProfile(100.0, 100.0, 100.0),
+            z=AxisMotionProfile(100.0, 100.0, 100.0),
+            rotation=AxisMotionProfile(100.0, 100.0, 100.0),
+        )
+        self.assertLess(
+            estimate_measurement_seconds(fast, motion),
+            estimate_measurement_seconds(slow, motion),
+        )
+
+    def test_estimate_includes_vna_average_and_cw_points(self):
+        base = self._config()
+        averaged_cw = MeasurementConfig(
+            x_range=base.x_range,
+            y_range=base.y_range,
+            z_range=base.z_range,
+            rotation_range=base.rotation_range,
+            vna=VnaConfig(
+                -30,
+                0.0,
+                0.1,
+                2,
+                1000,
+                4,
+                True,
+                cw_frequency_enabled=True,
+                cw_frequency_points=3,
+            ),
+            generator_1=base.generator_1,
+            generator_2=base.generator_2,
+            sweep=base.sweep,
+            movement=base.movement,
+            center_calibration=base.center_calibration,
+            plot_update_hz=base.plot_update_hz,
+        )
+        motion = MotionProfiles(
+            x=AxisMotionProfile(100.0, 100.0, 100.0),
+            y=AxisMotionProfile(100.0, 100.0, 100.0),
+            z=AxisMotionProfile(100.0, 100.0, 100.0),
+            rotation=AxisMotionProfile(100.0, 100.0, 100.0),
+        )
+        self.assertGreater(
+            estimate_measurement_seconds(averaged_cw, motion),
+            estimate_measurement_seconds(base, motion),
+        )
 
     def test_amplitudes_are_extended_without_mutating_source(self):
         source = (1.0,)

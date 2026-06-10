@@ -7,7 +7,6 @@ from PySide6.QtCore import QObject, QLoggingCategory, Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -23,6 +22,7 @@ from application.visualization.plot_slicing import (
     extract_plot_axis_values,
     plot_slice_axis_name,
 )
+from interface.ui.DoubleSpinBox import DoubleSpinBox
 from store.state import State
 
 
@@ -466,7 +466,7 @@ class YSliceSelectorWidget(QWidget):
         layout.setSpacing(6)
 
         self.title_label = QLabel("Y slice:")
-        self.value_spin = QDoubleSpinBox()
+        self.value_spin = DoubleSpinBox(self)
         self.value_spin.setDecimals(4)
         self.value_spin.setKeyboardTracking(False)
         self.value_spin.setSingleStep(0.1)
@@ -551,7 +551,7 @@ class RotationSliceSelectorWidget(QWidget):
         layout.setSpacing(6)
 
         self.title_label = QLabel("Rotation:")
-        self.value_spin = QDoubleSpinBox()
+        self.value_spin = DoubleSpinBox(self)
         self.value_spin.setDecimals(4)
         self.value_spin.setKeyboardTracking(False)
         self.value_spin.setSingleStep(1.0)
@@ -1394,15 +1394,22 @@ class DataVisualizationWindow(QWidget):
         title_data = title_data if isinstance(title_data, dict) else {}
         freq_1 = title_data.get("freq_1")
         freq_2 = title_data.get("freq_2")
+        vna_cw_frequency_hz = title_data.get("vna_cw_frequency_hz")
         freq_1_text = (
             f"{freq_1:.5f}" if isinstance(freq_1, (int, float, np.floating)) else "N/A"
         )
         freq_2_text = (
             f"{freq_2:.5f}" if isinstance(freq_2, (int, float, np.floating)) else "N/A"
         )
+        vna_cw_text = (
+            f", VNA CW: {float(vna_cw_frequency_hz) / 1e9:.6f} GHz"
+            if isinstance(vna_cw_frequency_hz, (int, float, np.floating))
+            else ""
+        )
 
         self.setWindowTitle(
-            f"{comment} - Freq1: {freq_1_text} GHz, Freq2: {freq_2_text} GHz"
+            f"{comment} - Freq1: {freq_1_text} GHz, "
+            f"Freq2: {freq_2_text} GHz{vna_cw_text}"
         )
         self.resize(1200, 760)
 

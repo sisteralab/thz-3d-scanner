@@ -18,6 +18,10 @@ class VnaConfig:
     average_enabled: bool
     parameter: str = DEFAULT_VNA_PARAMETER
     output_enabled: bool = True
+    cw_frequency_enabled: bool = False
+    cw_frequency_start_ghz: float = 1.0
+    cw_frequency_stop_ghz: float = 1.0
+    cw_frequency_points: int = 1
 
 
 @dataclass(frozen=True)
