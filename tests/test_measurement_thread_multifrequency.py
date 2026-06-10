@@ -275,6 +275,36 @@ class MeasurementThreadMultiFrequencyTest(unittest.TestCase):
         self.assertIsNone(thread.measure.data[0]["amp_1"])
         self.assertIsNone(thread.measure.data[0]["amp_2"])
 
+    def test_z_fly_auto_speed_can_raise_after_fast_vna_response(self):
+        base = build_config()
+        config = MeasurementConfig(
+            x_range=base.x_range,
+            y_range=base.y_range,
+            z_range=np.array([0.0, 1.0, 2.0], dtype=np.float32),
+            rotation_range=base.rotation_range,
+            vna=base.vna,
+            generator_1=base.generator_1,
+            generator_2=base.generator_2,
+            sweep=SweepModeConfig(False, False, True, False, True, 10.0, True, False),
+            movement=MovementTimingConfig(1, 1, 1, 1, 1),
+            center_calibration=base.center_calibration,
+            plot_update_hz=base.plot_update_hz,
+        )
+        thread = MeasureThread(config=config, runtime=FakeRuntime())
+        thread._build_z_profiles()
+
+        thread._last_vna_latency_s = 0.5
+        thread._limit_z_fly_speed_for_latency(min_step=1.0, tolerance=0.45)
+        slow_speed = thread._z_fly_profile["speed"]
+        self.assertLess(slow_speed, 10.0)
+
+        thread._last_vna_latency_s = 0.001
+        thread._limit_z_fly_speed_for_latency(min_step=1.0, tolerance=0.45)
+        raised_speed = thread._z_fly_profile["speed"]
+
+        self.assertGreater(raised_speed, slow_speed)
+        self.assertLessEqual(raised_speed, 10.0)
+
     def test_final_signal_is_emitted_after_measure_is_finished(self):
         thread = MeasureThread(config=build_config(), runtime=FakeRuntime())
         finished_values = []

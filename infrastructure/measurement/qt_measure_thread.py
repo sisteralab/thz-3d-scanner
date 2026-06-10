@@ -98,6 +98,7 @@ class MeasureThread(QThread):
         self._start_time = 0.0
         self._z_fast_profile = None
         self._z_fly_profile = None
+        self._z_requested_fly_speed = max(0.001, abs(float(self.z_fly_speed)))
         self._last_vna_latency_s = 0.0
 
         self.measure = MeasureModel.objects.create(data=[])
@@ -221,8 +222,9 @@ class MeasureThread(QThread):
                 }
             )
         fly_accel = max(1.0, fly_speed * 5.0)
+        self._z_requested_fly_speed = max(0.001, abs(float(fly_speed)))
         self._z_fly_profile = {
-            "speed": fly_speed,
+            "speed": self._z_requested_fly_speed,
             "accel": fly_accel,
             "decel": fly_accel,
         }
@@ -231,17 +233,18 @@ class MeasureThread(QThread):
         if not self._z_fly_profile or min_step <= 0:
             return
 
-        requested_speed = abs(float(self._z_fly_profile.get("speed", self.z_fly_speed)))
+        requested_speed = max(0.001, abs(float(self._z_requested_fly_speed)))
         if requested_speed <= 0:
             return
 
+        previous_speed = abs(float(self._z_fly_profile.get("speed", requested_speed)))
         latency_s = max(float(self._last_vna_latency_s), 0.001)
         poll_s = max(0.001, float(self.fly_poll_delay_ms) / 1000.0)
         sample_budget_s = latency_s + poll_s + 0.02
         safe_by_sample = 0.8 * float(min_step) / sample_budget_s
         safe_by_poll = 0.8 * (2.0 * float(tolerance)) / poll_s
-        safe_speed = max(0.001, min(safe_by_sample, safe_by_poll))
-        if requested_speed <= safe_speed:
+        safe_speed = max(0.001, min(requested_speed, safe_by_sample, safe_by_poll))
+        if abs(previous_speed - safe_speed) <= max(0.001, previous_speed * 0.01):
             return
 
         accel = max(1.0, safe_speed * 5.0)
@@ -250,12 +253,15 @@ class MeasureThread(QThread):
             "accel": accel,
             "decel": accel,
         }
+        log_level = "warning" if safe_speed < previous_speed else "info"
+        action = "limited" if safe_speed < previous_speed else "raised"
         self.log.emit(
             {
-                "type": "warning",
+                "type": log_level,
                 "msg": (
-                    "Z fly speed limited by VNA latency: "
-                    f"requested={requested_speed:.4f}, safe={safe_speed:.4f}, "
+                    f"Z fly speed {action} by VNA latency: "
+                    f"requested={requested_speed:.4f}, previous={previous_speed:.4f}, "
+                    f"safe={safe_speed:.4f}, "
                     f"latency={latency_s * 1000.0:.1f} ms, step={min_step:.4f}"
                 ),
             }
