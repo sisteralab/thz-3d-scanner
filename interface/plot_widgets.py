@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtGui
-from PySide6.QtCore import QObject, QLoggingCategory, Qt, Signal, QTimer
+from PySide6.QtCore import QLoggingCategory, Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -48,359 +48,6 @@ def complex_to_amplitude_phase(complex_data):
     amplitude_db = 20 * np.log10(np.clip(magnitude, 1e-12, None))
     phase = normalize_phase(np.angle(complex_data))
     return amplitude_db, phase
-
-
-class ComplexReferenceController(QObject):
-    """Stores selected reference points and emits corrected amplitude/phase maps."""
-
-    corrected_data_ready = Signal(dict)
-    selection_changed = Signal(dict)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.raw_data = None
-        self.selected_points = []  # [(x_idx, z_idx), ...]
-        self.selected_point_set = set()
-        self.selected_points_array = np.empty((0, 2), dtype=int)
-        self.collection_enabled = False
-        self.max_scatter_points = 1200
-        self.max_ui_points = 30
-        self.preview_ui_points = 4
-        self.points_version = 0
-
-    def _sync_points_array(self):
-        if self.selected_points:
-            self.selected_points_array = np.asarray(self.selected_points, dtype=int)
-        else:
-            self.selected_points_array = np.empty((0, 2), dtype=int)
-
-    def set_raw_data(self, data):
-        self.raw_data = data
-        self._emit_updates()
-
-    def add_point(self, x_coord, z_coord):
-        if self.raw_data is None or not self.collection_enabled:
-            return
-
-        x_axis, z_axis = self._get_axes(self.raw_data)
-        if x_axis.size == 0 or z_axis.size == 0:
-            return
-
-        x_idx = int(np.argmin(np.abs(x_axis - x_coord)))
-        z_idx = int(np.argmin(np.abs(z_axis - z_coord)))
-        point_key = (x_idx, z_idx)
-
-        if point_key in self.selected_point_set:
-            return
-
-        self.selected_points.append(point_key)
-        self.selected_point_set.add(point_key)
-        self._sync_points_array()
-        self.points_version += 1
-        self._emit_updates()
-
-    def remove_last_point(self):
-        if not self.selected_points:
-            return
-        removed_point = self.selected_points.pop()
-        self.selected_point_set.discard(removed_point)
-        self._sync_points_array()
-        self.points_version += 1
-        self._emit_updates()
-
-    def clear_points(self):
-        if not self.selected_points:
-            return
-        self.selected_points = []
-        self.selected_point_set = set()
-        self._sync_points_array()
-        self.points_version += 1
-        self._emit_updates()
-
-    def set_collection_enabled(self, enabled):
-        self.collection_enabled = bool(enabled)
-
-    def _emit_updates(self):
-        if self.raw_data is None:
-            self.selection_changed.emit(self._build_empty_info())
-            return
-
-        corrected_data, info = self._build_corrected_data(self.raw_data)
-        self.selection_changed.emit(info)
-        self.corrected_data_ready.emit(corrected_data)
-
-    @staticmethod
-    def _strip_heavy_fields(data):
-        if not isinstance(data, dict):
-            return {}
-        # Keep full metadata for UI, but never pass heavy raw traces through live update signal.
-        if "vna_data" not in data:
-            return data
-        return {key: value for key, value in data.items() if key != "vna_data"}
-
-    def _build_empty_info(self, data=None):
-        data = data if isinstance(data, dict) else {}
-        return {
-            "points_preview": [],
-            "points_ui": [],
-            "scatter_x": np.array([], dtype=float),
-            "scatter_z": np.array([], dtype=float),
-            "count": 0,
-            "points_version": self.points_version,
-            "render_key": None,
-            "reference_real": None,
-            "reference_imag": None,
-            "reference_amplitude_db": None,
-            "reference_phase_rad": None,
-            "points_ui_truncated": False,
-            "horizontal_axis_name": str(data.get("horizontal_axis_name", "X")),
-            "vertical_axis_name": str(data.get("vertical_axis_name", "Z")),
-        }
-
-    @staticmethod
-    def _get_axes(data):
-        amplitude = np.asarray(data.get("amplitude", []))
-        if amplitude.ndim != 2:
-            return np.array([]), np.array([])
-
-        x_axis = np.asarray(data.get("x", np.arange(amplitude.shape[0])), dtype=float)
-        z_axis = np.asarray(data.get("z", np.arange(amplitude.shape[1])), dtype=float)
-
-        if x_axis.size != amplitude.shape[0]:
-            x_axis = np.arange(amplitude.shape[0], dtype=float)
-        if z_axis.size != amplitude.shape[1]:
-            z_axis = np.arange(amplitude.shape[1], dtype=float)
-
-        return x_axis, z_axis
-
-    def _build_corrected_data(self, data):
-        if self.selected_points_array.size == 0:
-            return self._strip_heavy_fields(data), self._build_empty_info(data)
-
-        real_map = np.asarray(data.get("complex_real", []), dtype=np.float32)
-        imag_map = np.asarray(data.get("complex_imag", []), dtype=np.float32)
-
-        if real_map.ndim != 2 or imag_map.shape != real_map.shape:
-            amplitude = np.asarray(data.get("amplitude", []), dtype=np.float32)
-            phase = np.asarray(data.get("phase", []), dtype=np.float32)
-            if amplitude.ndim != 2 or phase.shape != amplitude.shape:
-                return self._strip_heavy_fields(data), self._build_empty_info(data)
-
-            # Backward-compatible fallback for old datasets without complex maps.
-            amp_linear = np.exp(amplitude * np.float32(np.log(10.0) / 20.0))
-            real_map = amp_linear * np.cos(phase)
-            imag_map = amp_linear * np.sin(phase)
-
-        rows, cols = real_map.shape
-        x_axis = np.asarray(data.get("x", np.arange(rows)), dtype=float)
-        z_axis = np.asarray(data.get("z", np.arange(cols)), dtype=float)
-        if x_axis.size != rows:
-            x_axis = np.arange(rows, dtype=float)
-        if z_axis.size != cols:
-            z_axis = np.arange(cols, dtype=float)
-
-        valid_mask = (
-            (self.selected_points_array[:, 0] >= 0)
-            & (self.selected_points_array[:, 0] < rows)
-            & (self.selected_points_array[:, 1] >= 0)
-            & (self.selected_points_array[:, 1] < cols)
-        )
-        valid_points = self.selected_points_array[valid_mask]
-        if valid_points.size == 0:
-            return self._strip_heavy_fields(data), self._build_empty_info(data)
-
-        selected_real = real_map[valid_points[:, 0], valid_points[:, 1]]
-        selected_imag = imag_map[valid_points[:, 0], valid_points[:, 1]]
-        reference_real = float(np.mean(selected_real, dtype=np.float64))
-        reference_imag = float(np.mean(selected_imag, dtype=np.float64))
-
-        corrected_real = real_map - reference_real
-        corrected_imag = imag_map - reference_imag
-        corrected_amplitude = 20 * np.log10(
-            np.clip(np.hypot(corrected_real, corrected_imag), 1e-12, None)
-        )
-        corrected_phase = np.arctan2(corrected_imag, corrected_real)
-        corrected_data = self._strip_heavy_fields(data)
-        corrected_data["amplitude"] = corrected_amplitude
-        corrected_data["phase"] = corrected_phase
-        corrected_data["complex_real"] = corrected_real
-        corrected_data["complex_imag"] = corrected_imag
-
-        preview_count = min(self.preview_ui_points, valid_points.shape[0])
-        ui_count = min(self.max_ui_points, valid_points.shape[0])
-        preview_points = valid_points[:preview_count]
-        ui_points = valid_points[:ui_count]
-        preview_real = selected_real[:preview_count]
-        preview_imag = selected_imag[:preview_count]
-        ui_real = selected_real[:ui_count]
-        ui_imag = selected_imag[:ui_count]
-
-        scatter_points = valid_points
-        if valid_points.shape[0] > self.max_scatter_points:
-            stride = int(np.ceil(valid_points.shape[0] / self.max_scatter_points))
-            scatter_points = valid_points[::stride]
-
-        points_preview = []
-        for point, real_value, imag_value in zip(
-            preview_points, preview_real, preview_imag
-        ):
-            points_preview.append(
-                {
-                    "x": float(x_axis[point[0]]),
-                    "z": float(z_axis[point[1]]),
-                    "real": float(real_value),
-                    "imag": float(imag_value),
-                }
-            )
-
-        points_ui = []
-        for point, real_value, imag_value in zip(ui_points, ui_real, ui_imag):
-            points_ui.append(
-                {
-                    "x": float(x_axis[point[0]]),
-                    "z": float(z_axis[point[1]]),
-                    "real": float(real_value),
-                    "imag": float(imag_value),
-                }
-            )
-
-        render_key = (
-            self.points_version,
-            int(x_axis.size),
-            int(z_axis.size),
-            float(x_axis[0]),
-            float(x_axis[-1]),
-            float(z_axis[0]),
-            float(z_axis[-1]),
-        )
-
-        info = {
-            "points_preview": points_preview,
-            "points_ui": points_ui,
-            "points_ui_truncated": valid_points.shape[0] > ui_count,
-            "count": int(valid_points.shape[0]),
-            "points_version": self.points_version,
-            "render_key": render_key,
-            "scatter_x": x_axis[scatter_points[:, 0]],
-            "scatter_z": z_axis[scatter_points[:, 1]],
-            "reference_real": reference_real,
-            "reference_imag": reference_imag,
-            "reference_amplitude_db": float(
-                20
-                * np.log10(
-                    np.clip(np.hypot(reference_real, reference_imag), 1e-12, None)
-                )
-            ),
-            "reference_phase_rad": float(np.arctan2(reference_imag, reference_real)),
-            "horizontal_axis_name": str(data.get("horizontal_axis_name", "X")),
-            "vertical_axis_name": str(data.get("vertical_axis_name", "Z")),
-        }
-
-        return corrected_data, info
-
-
-class ComplexReferenceWidget(QWidget):
-    """Small control panel for reference point selection."""
-
-    def __init__(self, controller: ComplexReferenceController, parent=None):
-        super().__init__(parent)
-        self.controller = controller
-        self._last_render_key = None
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(6)
-        self.enable_collect_checkbox = QCheckBox("Collect points")
-        self.enable_collect_checkbox.setChecked(self.controller.collection_enabled)
-        self.hint_label = QLabel("Click Amplitude map (X horizontal, Z vertical)")
-        self.hint_label.setStyleSheet("color: #666;")
-
-        self.remove_last_button = QPushButton("Undo")
-        self.clear_button = QPushButton("Clear")
-        self.remove_last_button.setMaximumWidth(70)
-        self.clear_button.setMaximumWidth(70)
-        self.remove_last_button.setMaximumHeight(24)
-        self.clear_button.setMaximumHeight(24)
-
-        top_row.addWidget(self.enable_collect_checkbox)
-        top_row.addWidget(self.hint_label, stretch=1)
-        top_row.addWidget(self.remove_last_button)
-        top_row.addWidget(self.clear_button)
-
-        self.summary_label = QLabel("Ref: none")
-        self.points_label = QLabel("P[0]: none")
-        self.points_label.setStyleSheet("color: #555;")
-        self.points_label.setWordWrap(False)
-
-        layout.addLayout(top_row)
-        layout.addWidget(self.summary_label)
-        layout.addWidget(self.points_label)
-        self.setLayout(layout)
-        self.setMaximumHeight(88)
-
-        self.remove_last_button.clicked.connect(self.controller.remove_last_point)
-        self.clear_button.clicked.connect(self.controller.clear_points)
-        self.enable_collect_checkbox.toggled.connect(
-            self.controller.set_collection_enabled
-        )
-        self.controller.selection_changed.connect(self.update_from_selection)
-
-    def update_from_selection(self, info):
-        horizontal_axis_name = str(info.get("horizontal_axis_name", "X"))
-        vertical_axis_name = str(info.get("vertical_axis_name", "Z"))
-        self.hint_label.setText(
-            f"Click Amplitude map ({horizontal_axis_name} horizontal, "
-            f"{vertical_axis_name} vertical)"
-        )
-        count = int(info.get("count", 0))
-        if count:
-            self.summary_label.setText(
-                "Ref(mean): "
-                f"{info['reference_real']:.4e}{info['reference_imag']:+.4e}j "
-                f"| {info['reference_amplitude_db']:.2f} dB | "
-                f"{info['reference_phase_rad']:.3f} rad"
-            )
-        else:
-            self.summary_label.setText("Ref: none")
-
-        render_key = info.get("render_key")
-        if render_key == self._last_render_key:
-            return
-        self._last_render_key = render_key
-
-        preview_points = info.get("points_preview", [])
-        if preview_points:
-            preview = []
-            for point in preview_points:
-                preview.append(f"({point['x']:.2f},{point['z']:.2f})")
-            tail = (
-                f" +{count - len(preview_points)}"
-                if count > len(preview_points)
-                else ""
-            )
-            self.points_label.setText(f"P[{count}]: " + ", ".join(preview) + tail)
-        else:
-            self.points_label.setText("P[0]: none")
-
-        ui_points = info.get("points_ui", [])
-        if not ui_points:
-            self.points_label.setToolTip("")
-            return
-
-        tooltip_lines = []
-        for idx, point in enumerate(ui_points, start=1):
-            tooltip_lines.append(
-                f"{idx}) {horizontal_axis_name}={point['x']:.3f}, "
-                f"{vertical_axis_name}={point['z']:.3f}, "
-                f"C={point['real']:.4e}{point['imag']:+.4e}j"
-            )
-        if info.get("points_ui_truncated", False):
-            tooltip_lines.append("... truncated ...")
-        self.points_label.setToolTip("\n".join(tooltip_lines))
 
 
 class PlotPlaneSelectorWidget(QWidget):
@@ -630,13 +277,8 @@ class BasePlotWidget(QWidget):
         title="",
         data_key="amplitude",
         colormap_name="inferno",
-        reference_controller: ComplexReferenceController = None,
-        allow_reference_selection=False,
     ):
         super().__init__(parent)
-
-        self.reference_controller = reference_controller
-        self.allow_reference_selection = allow_reference_selection
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -687,14 +329,6 @@ class BasePlotWidget(QWidget):
         self._last_applied_levels = None
         self.hist_item.sigLevelsChanged.connect(self._on_hist_levels_changed)
         self.hist_item.sigLevelChangeFinished.connect(self._on_hist_levels_changed)
-
-        self.reference_points_scatter = pg.ScatterPlotItem(
-            size=11,
-            pen=pg.mkPen((0, 255, 255), width=2),
-            brush=pg.mkBrush(0, 0, 0, 0),
-            symbol="x",
-        )
-        self.plot_item.addItem(self.reference_points_scatter)
 
         self.late_samples_overlay_item = pg.ImageItem(axisOrder="col-major")
         if hasattr(self.late_samples_overlay_item, "setAutoDownsample"):
@@ -767,7 +401,6 @@ class BasePlotWidget(QWidget):
         self._late_mask_image_buffer = None
         self.x_axis = np.array([])
         self.z_axis = np.array([])
-        self._last_markers_render_key = None
         self.show_late_samples = True
 
         # Throttle updates to limit FPS and reduce CPU/GPU load
@@ -785,12 +418,6 @@ class BasePlotWidget(QWidget):
         self.roi.sigRegionChanged.connect(self._schedule_roi_update)
         self.vertical_roi.sigRegionChanged.connect(self._schedule_roi_update)
         self.plot_item.scene().sigMouseMoved.connect(self.mouse_moved)
-        self.plot_item.scene().sigMouseClicked.connect(self.mouse_clicked)
-
-        if self.reference_controller is not None:
-            self.reference_controller.selection_changed.connect(
-                self.update_reference_points
-            )
 
     @staticmethod
     def _update_interval_ms():
@@ -1039,44 +666,6 @@ class BasePlotWidget(QWidget):
             f"{self.vertical_axis_name}: {z_coord:.3f} mm"
             f"{late_text}"
         )
-
-    def mouse_clicked(self, mouse_event):
-        if (
-            not self.allow_reference_selection
-            or self.reference_controller is None
-            or mouse_event.button() != Qt.MouseButton.LeftButton
-        ):
-            return
-
-        scene_pos = mouse_event.scenePos()
-        if not self.plot_item.sceneBoundingRect().contains(scene_pos):
-            return
-
-        point = self.plot_item.vb.mapSceneToView(scene_pos)
-        indices = self._map_world_to_indices(point.x(), point.y())
-        if indices is None:
-            return
-
-        x_idx, z_idx = indices
-        self.reference_controller.add_point(
-            float(self.x_axis[x_idx]),
-            float(self.z_axis[z_idx]),
-        )
-        mouse_event.accept()
-
-    def update_reference_points(self, info):
-        render_key = info.get("render_key")
-        if render_key == self._last_markers_render_key:
-            return
-        self._last_markers_render_key = render_key
-
-        scatter_x = np.asarray(info.get("scatter_x", []), dtype=float)
-        scatter_z = np.asarray(info.get("scatter_z", []), dtype=float)
-        if scatter_x.size == 0 or scatter_z.size == 0:
-            self.reference_points_scatter.clear()
-            return
-
-        self.reference_points_scatter.setData(x=scatter_x, y=scatter_z)
 
     def update_visualization(self):
         """Schedule a throttled visualization update."""
@@ -1355,32 +944,24 @@ class BasePlotWidget(QWidget):
 class AmplitudePlotWidget(BasePlotWidget):
     """Widget for amplitude visualization."""
 
-    def __init__(
-        self, parent=None, reference_controller: ComplexReferenceController = None
-    ):
+    def __init__(self, parent=None):
         super().__init__(
             parent,
             title="Amplitude",
             data_key="amplitude",
             colormap_name="inferno",
-            reference_controller=reference_controller,
-            allow_reference_selection=True,
         )
 
 
 class PhasePlotWidget(BasePlotWidget):
     """Widget for phase visualization."""
 
-    def __init__(
-        self, parent=None, reference_controller: ComplexReferenceController = None
-    ):
+    def __init__(self, parent=None):
         super().__init__(
             parent,
             title="Phase",
             data_key="phase",
             colormap_name="phase",
-            reference_controller=reference_controller,
-            allow_reference_selection=False,
         )
 
 
@@ -1413,10 +994,6 @@ class DataVisualizationWindow(QWidget):
         )
         self.resize(1200, 760)
 
-        self.reference_controller = ComplexReferenceController(self)
-        self.reference_controller.corrected_data_ready.connect(
-            self._apply_corrected_data
-        )
         self._source_data = None
         self._current_y_index = 0
         self._current_plot_plane = PLOT_PLANE_ZX
@@ -1463,17 +1040,10 @@ class DataVisualizationWindow(QWidget):
         self.y_slice_widget.y_index_changed.connect(self._on_y_slice_changed)
         main_layout.addWidget(self.y_slice_widget)
 
-        self.reference_widget = ComplexReferenceWidget(self.reference_controller)
-        main_layout.addWidget(self.reference_widget)
-
         plots_layout = QHBoxLayout()
         plots_layout.setSpacing(10)
-        self.amplitude_widget = AmplitudePlotWidget(
-            reference_controller=self.reference_controller
-        )
-        self.phase_widget = PhasePlotWidget(
-            reference_controller=self.reference_controller
-        )
+        self.amplitude_widget = AmplitudePlotWidget()
+        self.phase_widget = PhasePlotWidget()
         plots_layout.addWidget(self.amplitude_widget, stretch=1)
         plots_layout.addWidget(self.phase_widget, stretch=1)
         main_layout.addLayout(plots_layout, stretch=1)
@@ -1485,10 +1055,6 @@ class DataVisualizationWindow(QWidget):
         )
         self.show_calibrated_checkbox.toggled.connect(self._on_show_calibrated_toggled)
         self.update_data(data)
-
-    def _apply_corrected_data(self, data):
-        self.amplitude_widget.update_data(data)
-        self.phase_widget.update_data(data)
 
     def _set_late_sample_markers_visible(self, visible):
         self.amplitude_widget.set_late_sample_markers_visible(visible)
@@ -1605,7 +1171,8 @@ class DataVisualizationWindow(QWidget):
             self._current_plot_plane,
             slice_index,
         )
-        self.reference_controller.set_raw_data(slice_data)
+        self.amplitude_widget.update_data(slice_data)
+        self.phase_widget.update_data(slice_data)
 
     def update_data(self, data):
         self._source_data = data
