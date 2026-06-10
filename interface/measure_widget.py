@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QVBoxLayout,
     QCheckBox,
-    QComboBox,
     QLineEdit,
 )
 
@@ -35,6 +34,7 @@ from application.measurement.planning import (
 )
 from infrastructure.measurement.qt_measure_thread import MeasureThread
 from interface.ui.Button import Button
+from interface.ui.ComboBox import ComboBox
 from interface.ui.DoubleSpinBox import DoubleSpinBox
 from interface.ui.Lines import HLine
 from interface.ui.SpinBox import SpinBox
@@ -184,7 +184,7 @@ class MeasureWidget(QGroupBox):
         self.vna_points.setRange(1, 5000)
         self.vna_points.setValue(State.measure_vna_points)
         self.vna_points.valueChanged.connect(self.update_approx_time)
-        self.vna_parameter = QComboBox(self)
+        self.vna_parameter = ComboBox(self)
         for parameter in VNA_PARAMETER_OPTIONS:
             self.vna_parameter.addItem(parameter, parameter)
         current_parameter = normalize_vna_parameter(State.measure_vna_parameter)

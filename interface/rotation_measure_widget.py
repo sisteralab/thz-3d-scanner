@@ -6,7 +6,6 @@ import pyqtgraph as pg
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFormLayout,
     QGridLayout,
     QLabel,
@@ -17,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from api.vna import VNA_PARAMETER_OPTIONS, normalize_vna_parameter
 from interface.ui.Button import Button
+from interface.ui.ComboBox import ComboBox
 from interface.ui.DoubleSpinBox import DoubleSpinBox
 from interface.ui.SpinBox import SpinBox
 from store.state import State
@@ -388,7 +388,7 @@ class RotationMeasureWidget(QWidget):
         self.vna_points = SpinBox(self)
         self.vna_points.setRange(1, 5000)
         self.vna_points.setValue(State.measure_vna_points)
-        self.vna_parameter = QComboBox(self)
+        self.vna_parameter = ComboBox(self)
         for parameter in VNA_PARAMETER_OPTIONS:
             self.vna_parameter.addItem(parameter, parameter)
         current_parameter = normalize_vna_parameter(State.measure_vna_parameter)
