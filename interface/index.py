@@ -19,8 +19,6 @@ from interface.memory_monitor import MemoryMonitor
 from interface.manager_widget import ManagerWidget
 from interface.plot_widgets import (
     AmplitudePlotWidget,
-    ComplexReferenceController,
-    ComplexReferenceWidget,
     PLOT_PLANE_ZX,
     PhasePlotWidget,
     PlotPlaneSelectorWidget,
@@ -47,7 +45,6 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout()
 
         self.manager_widget = ManagerWidget(self)
-        self.reference_controller = ComplexReferenceController(self)
         self._source_data = None
         self._current_y_index = 0
         self._current_plot_plane = PLOT_PLANE_ZX
@@ -60,15 +57,10 @@ class MainWindow(QMainWindow):
         self._plot_update_timer.timeout.connect(self._apply_pending_plot_update)
 
         # Create amplitude pyqtgraph widget
-        self.amplitude_widget = AmplitudePlotWidget(
-            reference_controller=self.reference_controller
-        )
+        self.amplitude_widget = AmplitudePlotWidget()
 
         # Create phase pyqtgraph widget
-        self.phase_widget = PhasePlotWidget(
-            reference_controller=self.reference_controller
-        )
-        self.reference_widget = ComplexReferenceWidget(self.reference_controller)
+        self.phase_widget = PhasePlotWidget()
         self.rotation_slice_widget = RotationSliceSelectorWidget()
         self.plot_plane_widget = PlotPlaneSelectorWidget()
         self.y_slice_widget = YSliceSelectorWidget()
@@ -81,9 +73,6 @@ class MainWindow(QMainWindow):
         self.show_calibrated_checkbox.setChecked(False)
         self.show_calibrated_checkbox.setToolTip(
             "Display center-calibration corrected amplitude and phase when available."
-        )
-        self.reference_controller.corrected_data_ready.connect(
-            self._apply_corrected_data
         )
         self.rotation_slice_widget.rotation_index_changed.connect(
             self._on_rotation_slice_changed
@@ -108,7 +97,6 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.y_slice_widget)
         left_layout.addWidget(self.show_late_samples_checkbox)
         left_layout.addWidget(self.show_calibrated_checkbox)
-        left_layout.addWidget(self.reference_widget)
         left_layout.addLayout(plots_layout)
         left_layout.addWidget(self.log_widget)
         left_layout.addWidget(self.memory_monitor)
@@ -242,13 +230,13 @@ class MainWindow(QMainWindow):
             return
         axis_name = plot_slice_axis_name(self._current_plot_plane)
         slice_index = self._current_slice_indices.get(axis_name, 0)
-        self.reference_controller.set_raw_data(
-            extract_axis_slice(
-                self._prepare_plot_data(self._current_rotation_data()),
-                self._current_plot_plane,
-                slice_index,
-            )
+        slice_data = extract_axis_slice(
+            self._prepare_plot_data(self._current_rotation_data()),
+            self._current_plot_plane,
+            slice_index,
         )
+        self.amplitude_widget.update_data(slice_data)
+        self.phase_widget.update_data(slice_data)
 
     def _prepare_plot_data(self, data):
         if not self.show_calibrated_checkbox.isChecked() or not isinstance(data, dict):
@@ -270,11 +258,6 @@ class MainWindow(QMainWindow):
 
     def _on_show_calibrated_toggled(self, _checked):
         self._push_current_slice()
-
-    def _apply_corrected_data(self, data):
-        """Apply corrected data after complex reference subtraction."""
-        self.amplitude_widget.update_data(data)
-        self.phase_widget.update_data(data)
 
     def _set_late_sample_markers_visible(self, visible):
         self.amplitude_widget.set_late_sample_markers_visible(visible)

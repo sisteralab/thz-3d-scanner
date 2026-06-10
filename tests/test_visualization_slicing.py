@@ -15,7 +15,9 @@ from application.visualization.plot_slicing import (
 from interface.plot_widgets import (
     AmplitudePlotWidget,
     BasePlotWidget,
+    DataVisualizationWindow,
     PhasePlotWidget,
+    build_demo_data,
     phase_rad_to_degrees,
 )
 from store.state import State
@@ -152,6 +154,29 @@ class VisualizationSlicingTest(unittest.TestCase):
         self.app.processEvents()
 
         self.assertEqual(tuple(widget.hist_item.getLevels()), (40.0, 80.0))
+
+    def test_visualization_window_pushes_slice_to_plots(self):
+        window = DataVisualizationWindow(build_demo_data(nx=8, nz=7, ny=3))
+        self.app.processEvents()
+        window.amplitude_widget._perform_deferred_updates()
+        window.phase_widget._perform_deferred_updates()
+
+        self.assertIsNotNone(window.amplitude_widget.current_data)
+        self.assertIsNotNone(window.phase_widget.current_data)
+        self.assertIsNotNone(window.amplitude_widget.display_data)
+        self.assertIsNotNone(window.phase_widget.display_data)
+
+    def test_main_window_import_and_initial_plot(self):
+        from interface.index import MainWindow
+
+        window = MainWindow()
+        self.app.processEvents()
+        window._apply_pending_plot_update()
+        window.amplitude_widget._perform_deferred_updates()
+        window.phase_widget._perform_deferred_updates()
+
+        self.assertIsNotNone(window.amplitude_widget.current_data)
+        self.assertIsNotNone(window.phase_widget.current_data)
 
 
 if __name__ == "__main__":
